@@ -12,6 +12,8 @@ Thumbs.db
 
 # SQLite database
 osrs_data.db
+osrs_data.db-shm
+osrs_data.db-wal
 *.db
 *.sqlite3
 
