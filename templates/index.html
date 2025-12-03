@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OSRS Population Tracker</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@1.2.1/dist/chartjs-plugin-zoom.min.js"></script>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -46,6 +49,41 @@
             color: #ffffff;
             text-decoration: underline;
         }
+        /* Tooltip for granularity info */
+        .info {
+            position: relative;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 6px;
+        }
+        .info-icon {
+            background: #2e2e2e;
+            border-radius: 50%;
+            padding: 2px 6px;
+            border: 1px solid #444;
+            color: #bdbdbd;
+            font-weight: 600;
+            font-size: 0.85em;
+            line-height: 1;
+        }
+        .info .tooltip {
+            display: none;
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            top: calc(100% + 8px);
+            background: #222;
+            color: #fff;
+            padding: 6px 8px;
+            border-radius: 6px;
+            white-space: nowrap;
+            font-size: 0.85em;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+            z-index: 30;
+        }
+        .info:hover .tooltip {
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -58,11 +96,47 @@
         </div>
 
         <div class="card">
+            <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:center; align-items:center; margin-bottom:12px;">
+                <label style="font-size:0.9em; color:#bdbdbd;">Granularity:
+                    <select id="granularitySelect">
+                        <option value="5m">5 min</option>
+                        <option value="15m">15 min</option>
+                        <option value="30m">30 min</option>
+                        <option value="hour">Hour</option>
+                        <option value="day" selected>Day</option>
+                        <option value="week">Week</option>
+                        <option value="month">Month</option>
+                    </select>
+                </label>
+                <span id="granularityInfo" class="info" style="display:inline-block;" role="note">
+                    <span class="info-icon" aria-hidden="true">ℹ</span>
+                    <span class="tooltip" role="tooltip">Minute options disabled for ranges > 1 day</span>
+                </span>
+
+                <label style="font-size:0.9em; color:#bdbdbd;">Start:
+                    <input id="startInput" type="datetime-local">
+                </label>
+                <label style="font-size:0.9em; color:#bdbdbd;">End:
+                    <input id="endInput" type="datetime-local">
+                </label>
+
+                <button id="applyRangeBtn">Update</button>
+                <button id="resetZoomBtn">Reset Zoom</button>
+
+                <div style="display:flex; gap:6px; margin-left:8px;">
+                    <button id="last24Btn">Last 24h</button>
+                    <button id="last7Btn">Last 7d</button>
+                    <button id="last30Btn">Last 30d</button>
+                </div>
+                <div id="loadingSpinner" style="display:none; margin-left:8px; color:#bdbdbd; font-size:0.9em;">Loading…</div>
+            </div>
+
             <canvas id="populationChart"></canvas>
+            <div id="chartError" class="timestamp" style="margin-top:8px; color:#ff6b6b; display:none;"></div>
             <div id="chart-timezone" class="timestamp" style="margin-top:8px;"></div>
             <div id="about-app" style="margin-top:12px; text-align:left; color:#bdbdbd; font-size:0.95em;">
                 <strong>About this chart:</strong>
-                <div style="margin-top:6px;">This chart shows the number of players online over the last 24 hours. Times are displayed in your browser's local timezone (shown above). Data is periodically collected by a Python backend and the site is hosted on <a href="https://www.pythonanywhere.com/" target="_blank" rel="noopener noreferrer">PythonAnywhere</a>.</div>
+                <div style="margin-top:6px;">This chart shows the number of players online. Use the controls above to change the date range and granularity. For large ranges the backend should return aggregated data for best performance.</div>
             </div>
         </div>
     </div>
@@ -71,99 +145,280 @@
         // Configuration
         const API_BASE = '';
 
-        // 1. Fetch and Display the Latest Number
+        // Globals
+        let populationChart = null;
+        let rawHistory = []; // cache of last fetched raw points
+
+        // Utility: format JS Date -> ISO used by datetime-local (without seconds)
+        function toLocalInputISO(date) {
+            const pad = n => String(n).padStart(2, '0');
+            return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+        }
+
+        // Fetch latest player count
         async function fetchLatest() {
             try {
                 const response = await fetch(`${API_BASE}/api/latest`);
                 const data = await response.json();
-                
-                // Format number with commas (e.g., 140,000)
                 document.getElementById('player-count').innerText = data.count.toLocaleString();
-                document.getElementById('last-updated').innerText = `Last updated: ${data.timestamp}`;
+                // Format the timestamp in the user's local timezone
+                try {
+                    const ts = data.timestamp;
+                    if (ts) {
+                        const d = new Date(ts);
+                        const formatted = d.toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' });
+                        document.getElementById('last-updated').innerText = `Last updated: ${formatted}`;
+                    } else {
+                        document.getElementById('last-updated').innerText = `Last updated: ${data.timestamp}`;
+                    }
+                } catch (e) {
+                    document.getElementById('last-updated').innerText = `Last updated: ${data.timestamp}`;
+                }
             } catch (error) {
                 console.error('Error fetching latest:', error);
                 document.getElementById('player-count').innerText = "Offline";
             }
         }
 
-        // 2. Fetch History and Render Graph
-        async function renderChart() {
+        // Fetch history from API with optional start/end (ISO) and unit/step for server-side aggregation
+        async function fetchHistory({start=null, end=null, unit=null, step=null, limit=null} = {}) {
             try {
-                // Get last 24 hours of data (288 points)
-                const response = await fetch(`${API_BASE}/api/history?limit=288`);
-                const historyData = await response.json();
-
-                // Determine viewer timezone and helper formatter
-                const viewerTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local';
-
-                // Split data into two arrays for the chart: Labels (Time) and Data (Count)
-                const labels = historyData.map(item => {
-                    // Convert timestamp to viewer-local "HH:MM"
-                    const date = new Date(item.timestamp);
-                    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                });
-                const counts = historyData.map(item => item.count);
-
-                // Draw the Chart
-                const ctx = document.getElementById('populationChart').getContext('2d');
-                // show viewer timezone under the chart
-                document.getElementById('chart-timezone').innerText = `Times shown in: ${viewerTimeZone}`;
-
-                new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: 'Online Players',
-                            data: counts,
-                            borderColor: '#ff9800', // Orange line
-                            backgroundColor: 'rgba(255, 152, 0, 0.1)', // Light orange fill
-                            borderWidth: 2,
-                            pointRadius: 0, // Hide dots for a smooth line
-                            fill: true,
-                            tension: 0.4 // Smooth curves
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        interaction: {
-                            intersect: false,
-                            mode: 'index',
-                        },
-                        plugins: {
-                            title: { display: false },
-                            tooltip: {
-                                callbacks: {
-                                    // Show full localized datetime (with timezone) in the tooltip title
-                                    title: function(context) {
-                                        if (!context || !context.length) return '';
-                                        const idx = context[0].dataIndex;
-                                        const date = new Date(historyData[idx].timestamp);
-                                        return date.toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' });
-                                    },
-                                    // Keep the default label but include the count formatting
-                                    label: function(context) {
-                                        const value = context.formattedValue;
-                                        return `Online Players: ${value}`;
-                                    }
-                                }
-                            }
-                        },
-                        scales: {
-                            x: { grid: { color: '#333' } },
-                            y: { grid: { color: '#333' } }
-                        }
+                const params = new URLSearchParams();
+                if (start) params.set('start', start);
+                if (end) params.set('end', end);
+                if (unit) params.set('unit', unit);
+                if (step) params.set('step', step);
+                if (limit) params.set('limit', limit);
+                const response = await fetch(`${API_BASE}/api/history?${params.toString()}`);
+                const contentType = response.headers.get('content-type') || '';
+                // If server returned non-OK (e.g., 400), try to show the server message
+                if (!response.ok) {
+                    if (contentType.includes('application/json')) {
+                        const err = await response.json();
+                        throw new Error(err.error || err.message || `Server responded ${response.status}`);
+                    } else {
+                        const txt = await response.text();
+                        throw new Error(txt || `Server responded ${response.status}`);
                     }
-                });
-
-            } catch (error) {
-                console.error('Error rendering chart:', error);
+                }
+                const data = await response.json();
+                // Expecting [{timestamp: ISO, count: number}, ...]
+                rawHistory = data;
+                return data;
+            } catch (err) {
+                console.error('Error fetching history:', err);
+                throw err;
             }
         }
 
-        // Run functions on page load
-        fetchLatest();
-        renderChart();
+        function buildChart(points, granularityInfo) {
+            const ctx = document.getElementById('populationChart').getContext('2d');
+            const viewerTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local';
+            document.getElementById('chart-timezone').innerText = `Times shown in: ${viewerTimeZone}`;
+
+            const dataPoints = points.map(p => ({ x: new Date(p.timestamp), y: p.count }));
+
+            const cfg = {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: 'Online Players',
+                        data: dataPoints,
+                        borderColor: '#ff9800',
+                        backgroundColor: 'rgba(255, 152, 0, 0.08)',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        fill: true,
+                        tension: 0.25
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: {
+                        decimation: { enabled: true, algorithm: 'lttb', samples: 1000 },
+                        zoom: {
+                            pan: { enabled: true, mode: 'x' },
+                            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                title: function(context) {
+                                    if (!context.length) return '';
+                                    const d = context[0].parsed.x;
+                                    return new Date(d).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+                                },
+                                label: function(context) {
+                                    return `Online Players: ${context.parsed.y.toLocaleString()}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                                time: (function() {
+                                    // granularityInfo can be a string (unit) or {unit, step}
+                                    const info = granularityInfo || 'day';
+                                    const unit = (typeof info === 'object') ? info.unit : info;
+                                    const step = (typeof info === 'object' && info.step) ? info.step : undefined;
+                                    return {
+                                        unit: unit || 'day',
+                                        stepSize: step,
+                                        tooltipFormat: 'DD T',
+                                        displayFormats: {
+                                            minute: 'HH:mm',
+                                            hour: 'HH:mm',
+                                            day: 'MMM d',
+                                            week: 'MMM d',
+                                            month: 'MMM yyyy'
+                                        }
+                                    };
+                                })(),
+                            grid: { color: '#333' }
+                        },
+                        y: { beginAtZero: true, grid: { color: '#333' } }
+                    }
+                }
+            };
+
+            if (populationChart) {
+                populationChart.destroy();
+            }
+            populationChart = new Chart(ctx, cfg);
+        }
+
+        // Small helpers to show/hide errors and to enable/disable controls while fetching
+        function showChartError(msg) {
+            const el = document.getElementById('chartError');
+            if (!el) return;
+            if (msg) {
+                el.innerText = msg;
+                el.style.display = 'block';
+            } else {
+                el.innerText = '';
+                el.style.display = 'none';
+            }
+        }
+
+        function setControlsEnabled(enabled) {
+            const ids = ['applyRangeBtn','resetZoomBtn','granularitySelect','startInput','endInput','last24Btn','last7Btn','last30Btn'];
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = !enabled;
+            });
+        }
+
+        // Simple spinner helpers
+        function showSpinner() {
+            const s = document.getElementById('loadingSpinner');
+            if (s) s.style.display = 'inline-block';
+        }
+        function hideSpinner() {
+            const s = document.getElementById('loadingSpinner');
+            if (s) s.style.display = 'none';
+        }
+
+        // Disable minute granularity options when selected range > 1 day
+        function updateGranularityAvailability() {
+            const startVal = document.getElementById('startInput').value;
+            const endVal = document.getElementById('endInput').value;
+            const select = document.getElementById('granularitySelect');
+            if (!select) return;
+
+            // If both dates are present, compute duration in ms. If not, assume last-24h (allowed)
+                const infoEl = document.getElementById('granularityInfo');
+                if (startVal && endVal) {
+                const startDt = new Date(startVal);
+                const endDt = new Date(endVal);
+                const durationMs = endDt - startDt;
+                const oneDayMs = 24 * 60 * 60 * 1000;
+                const disableMinutes = durationMs > oneDayMs;
+
+                // iterate options and disable those ending with 'm'
+                Array.from(select.options).forEach(opt => {
+                    if (opt.value.endsWith('m')) opt.disabled = disableMinutes;
+                });
+
+                // If current selection is a minute option and now disabled, pick 'hour'
+                if (select.value.endsWith('m') && select.options[select.selectedIndex].disabled) {
+                    select.value = 'hour';
+                }
+                    // Update tooltip text when minute options are disabled/enabled
+                    // Tooltip text is static and does not change
+            } else {
+                // No full range provided: enable minute options
+                Array.from(select.options).forEach(opt => { if (opt.value.endsWith('m')) opt.disabled = false; });
+                    // Tooltip text is static and does not change
+            }
+        }
+
+        // Update chart using inputs (gracefully handle 400 responses from server)
+        async function updateFromInputs() {
+            const gran = document.getElementById('granularitySelect').value;
+            const startVal = document.getElementById('startInput').value;
+            const endVal = document.getElementById('endInput').value;
+
+            const startISO = startVal ? new Date(startVal).toISOString() : null;
+            const endISO = endVal ? new Date(endVal).toISOString() : null;
+
+            // Map granularity string to Chart.js unit + optional step (for minute intervals)
+            let unit = gran;
+            let step = null;
+            if (gran.endsWith('m')) {
+                unit = 'minute';
+                step = parseInt(gran.slice(0, -1), 10);
+            }
+
+            setControlsEnabled(false);
+            showChartError('');
+            showSpinner();
+            try {
+                const history = await fetchHistory({ start: startISO, end: endISO, unit: unit, step: step });
+                buildChart(history, { unit, step });
+            } catch (err) {
+                console.error('Update failed:', err);
+                showChartError(err.message || 'Failed to load data');
+            } finally {
+                hideSpinner();
+                setControlsEnabled(true);
+            }
+        }
+
+        // Preset range buttons
+        function setPresetHours(hours) {
+            const end = new Date();
+            const start = new Date(end.getTime() - hours*60*60*1000);
+            document.getElementById('startInput').value = toLocalInputISO(start);
+            document.getElementById('endInput').value = toLocalInputISO(end);
+        }
+
+        // Initialize page: set default inputs and render
+        async function initializePage() {
+            // Default to last 24h with 15-minute granularity
+            setPresetHours(24);
+            document.getElementById('granularitySelect').value = '15m';
+            // Ensure minute options availability reflects the default range
+            updateGranularityAvailability();
+
+            // Wire up buttons
+            document.getElementById('applyRangeBtn').addEventListener('click', updateFromInputs);
+            document.getElementById('last24Btn').addEventListener('click', () => { setPresetHours(24); updateGranularityAvailability(); updateFromInputs(); });
+            document.getElementById('last7Btn').addEventListener('click', () => { setPresetHours(24*7); updateGranularityAvailability(); updateFromInputs(); });
+            document.getElementById('last30Btn').addEventListener('click', () => { setPresetHours(24*30); updateGranularityAvailability(); updateFromInputs(); });
+            document.getElementById('granularitySelect').addEventListener('change', updateFromInputs);
+            document.getElementById('resetZoomBtn').addEventListener('click', () => { if (populationChart) populationChart.resetZoom(); });
+            // Recalculate availability when user edits start/end inputs
+            document.getElementById('startInput').addEventListener('change', updateGranularityAvailability);
+            document.getElementById('endInput').addEventListener('change', updateGranularityAvailability);
+
+            // Initial fetch and render
+            await fetchLatest();
+            await updateFromInputs();
+        }
+
+        // Run initialize on page load
+        window.addEventListener('DOMContentLoaded', initializePage);
     </script>
 </script>
 
