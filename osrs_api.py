@@ -45,23 +45,20 @@ def get_latest():
 
 @app.route('/api/history')
 def get_history():
-        """
-        Returns data points for a graph.
-
-        Query parameters (all optional):
-            - limit (int): return the last `limit` raw rows (default used when no start/end provided; default 288)
-            - start (ISO datetime string): include rows with timestamp >= start
-            - end (ISO datetime string): include rows with timestamp <= end
-            - unit (str): aggregation unit, one of 'minute', 'hour', 'day'. When provided the server will aggregate points into buckets for that unit.
-            - step (int): when used with `unit=minute`, bucket size in minutes (e.g. 5, 15, 30). Note: minute-level queries are limited to a maximum span of 1 day.
-
-        Behavior:
-            - If `unit=minute` and `step` provided the server aggregates into `step`-minute buckets (timestamp returned as ISO UTC) and returns one point per bucket.
-            - If `unit` is 'hour' or 'day' the server aggregates by hour/day respectively and returns one point per bucket.
-            - If no aggregation params provided, the endpoint returns raw rows between `start`/`end` (if given) or the last `limit` rows.
-
-        Response: JSON array of objects: [{"timestamp": <ISO UTC string>, "count": <number>}, ...]
-        """
+    """
+    Returns data points for a graph.
+    Query parameters (all optional):
+        - limit (int): return the last `limit` raw rows (default used when no start/end provided; default 288)
+        - start (ISO datetime string): include rows with timestamp >= start
+        - end (ISO datetime string): include rows with timestamp <= end
+        - unit (str): aggregation unit, one of 'minute', 'hour', 'day'. When provided the server will aggregate points into buckets for that unit.
+        - step (int): when used with `unit=minute`, bucket size in minutes (e.g. 5, 15, 30). Note: minute-level queries are limited to a maximum span of 1 day.
+    Behavior:
+        - If `unit=minute` and `step` provided the server aggregates into `step`-minute buckets (timestamp returned as ISO UTC) and returns one point per bucket.
+        - If `unit` is 'hour' or 'day' the server aggregates by hour/day respectively and returns one point per bucket.
+        - If no aggregation params provided, the endpoint returns raw rows between `start`/`end` (if given) or the last `limit` rows.
+    Response: JSON array of objects: [{"timestamp": <ISO UTC string>, "count": <number>}, ...]
+    """
     # Query params
     limit = request.args.get('limit', default=None, type=int)
     start = request.args.get('start', default=None, type=str)
