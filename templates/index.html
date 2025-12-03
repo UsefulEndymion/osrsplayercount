@@ -124,6 +124,9 @@
                 <button id="resetZoomBtn">Reset Zoom</button>
 
                 <div style="display:flex; gap:6px; margin-left:8px;">
+                    <button id="last3Btn">Last 3h</button>
+                    <button id="last6Btn">Last 6h</button>
+                    <button id="last12Btn">Last 12h</button>
                     <button id="last24Btn">Last 24h</button>
                     <button id="last7Btn">Last 7d</button>
                     <button id="last30Btn">Last 30d</button>
@@ -302,7 +305,7 @@
         }
 
         function setControlsEnabled(enabled) {
-            const ids = ['applyRangeBtn','resetZoomBtn','granularitySelect','startInput','endInput','last24Btn','last7Btn','last30Btn'];
+            const ids = ['applyRangeBtn','resetZoomBtn','granularitySelect','startInput','endInput','last3Btn','last6Btn','last12Btn','last24Btn','last7Btn','last30Btn'];
             ids.forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.disabled = !enabled;
@@ -403,6 +406,9 @@
 
             // Wire up buttons
             document.getElementById('applyRangeBtn').addEventListener('click', updateFromInputs);
+            document.getElementById('last3Btn').addEventListener('click', () => { setPresetHours(3); updateGranularityAvailability(); updateFromInputs(); });
+            document.getElementById('last6Btn').addEventListener('click', () => { setPresetHours(6); updateGranularityAvailability(); updateFromInputs(); });
+            document.getElementById('last12Btn').addEventListener('click', () => { setPresetHours(12); updateGranularityAvailability(); updateFromInputs(); });
             document.getElementById('last24Btn').addEventListener('click', () => { setPresetHours(24); updateGranularityAvailability(); updateFromInputs(); });
             document.getElementById('last7Btn').addEventListener('click', () => { setPresetHours(24*7); updateGranularityAvailability(); updateFromInputs(); });
             document.getElementById('last30Btn').addEventListener('click', () => { setPresetHours(24*30); updateGranularityAvailability(); updateFromInputs(); });
