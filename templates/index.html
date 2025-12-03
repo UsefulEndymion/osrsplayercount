@@ -123,13 +123,21 @@
                 <button id="applyRangeBtn">Update</button>
                 <button id="resetZoomBtn">Reset Zoom</button>
 
-                <div style="display:flex; gap:6px; margin-left:8px;">
-                    <button id="last3Btn">Last 3h</button>
-                    <button id="last6Btn">Last 6h</button>
-                    <button id="last12Btn">Last 12h</button>
-                    <button id="last24Btn">Last 24h</button>
-                    <button id="last7Btn">Last 7d</button>
-                    <button id="last30Btn">Last 30d</button>
+                <div style="display:flex; gap:6px; margin-left:8px; align-items:center;">
+                    <label style="font-size:0.9em; color:#bdbdbd;">Range:
+                        <select id="presetSelect">
+                            <option value="3h">Last 3h</option>
+                            <option value="6h">Last 6h</option>
+                            <option value="12h">Last 12h</option>
+                            <option value="24h" selected>Last 24h</option>
+                            <option value="7d">Last 7d</option>
+                            <option value="30d">Last 30d</option>
+                            <option value="6m">Last 6m</option>
+                            <option value="1y">Last 1y</option>
+                            <option value="5y">Last 5y</option>
+                            <option value="10y">Last 10y</option>
+                        </select>
+                    </label>
                 </div>
                 <div id="loadingSpinner" style="display:none; margin-left:8px; color:#bdbdbd; font-size:0.9em;">Loading…</div>
             </div>
@@ -140,6 +148,9 @@
             <div id="about-app" style="margin-top:12px; text-align:left; color:#bdbdbd; font-size:0.95em;">
                 <strong>About this chart:</strong>
                 <div style="margin-top:6px;">This chart shows the number of players online. Use the controls above to change the date range and granularity. For large ranges the backend should return aggregated data for best performance.</div>
+                <div style="margin-top:8px;">How the bot works: a small python script periodically checks the Old School RuneScape homepage, extracts the reported online player count, and stores timestamped samples in the database. It runs at regular intervals (every 5 minutes by default).</div>
+                <div style="margin-top:8px;">Historical data (older than this bot's records) was sourced from <a href="https://www.misplaceditems.com/rs_tools/graph" target="_blank" rel="noopener noreferrer">misplaceditems.com — RS Tools (graph)</a>. That historical dataset is coarser: its timestamps and sample intervals are not as fine-grained as the samples collected by this bot, so recent data (collected by the bot) will appear with higher resolution than the imported history.</div>
+                <div style="margin-top:8px;">If you rely on long-range views (6 months, 1 year, 5 years, 10 years) the backend may return aggregated points; this reduces payload size and improves performance but also smooths short-term variance.</div>
             </div>
         </div>
     </div>
@@ -305,7 +316,7 @@
         }
 
         function setControlsEnabled(enabled) {
-            const ids = ['applyRangeBtn','resetZoomBtn','granularitySelect','startInput','endInput','last3Btn','last6Btn','last12Btn','last24Btn','last7Btn','last30Btn'];
+            const ids = ['applyRangeBtn','resetZoomBtn','granularitySelect','startInput','endInput','presetSelect'];
             ids.forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.disabled = !enabled;
@@ -396,6 +407,21 @@
             document.getElementById('endInput').value = toLocalInputISO(end);
         }
 
+        // Preset for months (handles month rollovers)
+        function setPresetMonths(months) {
+            const end = new Date();
+            const start = new Date(end.getFullYear(), end.getMonth() - months, end.getDate(), end.getHours(), end.getMinutes(), end.getSeconds());
+            document.getElementById('startInput').value = toLocalInputISO(start);
+            document.getElementById('endInput').value = toLocalInputISO(end);
+        }
+
+        function setPresetYears(years) {
+            const end = new Date();
+            const start = new Date(end.getFullYear() - years, end.getMonth(), end.getDate(), end.getHours(), end.getMinutes(), end.getSeconds());
+            document.getElementById('startInput').value = toLocalInputISO(start);
+            document.getElementById('endInput').value = toLocalInputISO(end);
+        }
+
         // Initialize page: set default inputs and render
         async function initializePage() {
             // Default to last 24h with 15-minute granularity
@@ -404,14 +430,30 @@
             // Ensure minute options availability reflects the default range
             updateGranularityAvailability();
 
-            // Wire up buttons
+            // Wire up controls
             document.getElementById('applyRangeBtn').addEventListener('click', updateFromInputs);
-            document.getElementById('last3Btn').addEventListener('click', () => { setPresetHours(3); updateGranularityAvailability(); updateFromInputs(); });
-            document.getElementById('last6Btn').addEventListener('click', () => { setPresetHours(6); updateGranularityAvailability(); updateFromInputs(); });
-            document.getElementById('last12Btn').addEventListener('click', () => { setPresetHours(12); updateGranularityAvailability(); updateFromInputs(); });
-            document.getElementById('last24Btn').addEventListener('click', () => { setPresetHours(24); updateGranularityAvailability(); updateFromInputs(); });
-            document.getElementById('last7Btn').addEventListener('click', () => { setPresetHours(24*7); updateGranularityAvailability(); updateFromInputs(); });
-            document.getElementById('last30Btn').addEventListener('click', () => { setPresetHours(24*30); updateGranularityAvailability(); updateFromInputs(); });
+            const presetEl = document.getElementById('presetSelect');
+            if (presetEl) {
+                // set default preset to Last 24h
+                presetEl.value = '24h';
+                presetEl.addEventListener('change', () => {
+                    const v = presetEl.value;
+                    switch (v) {
+                        case '3h': setPresetHours(3); break;
+                        case '6h': setPresetHours(6); break;
+                        case '12h': setPresetHours(12); break;
+                        case '24h': setPresetHours(24); break;
+                        case '7d': setPresetHours(24*7); break;
+                        case '30d': setPresetHours(24*30); break;
+                        case '6m': setPresetMonths(6); break;
+                        case '1y': setPresetYears(1); break;
+                        case '5y': setPresetYears(5); break;
+                        case '10y': setPresetYears(10); break;
+                    }
+                    updateGranularityAvailability();
+                    updateFromInputs();
+                });
+            }
             document.getElementById('granularitySelect').addEventListener('change', updateFromInputs);
             document.getElementById('resetZoomBtn').addEventListener('click', () => { if (populationChart) populationChart.resetZoom(); });
             // Recalculate availability when user edits start/end inputs
