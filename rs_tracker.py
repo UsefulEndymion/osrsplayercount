@@ -65,7 +65,10 @@ def main():
         try:
             # 2. Scrape Data
             count = get_osrs_count()
-            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # Store timezone-aware UTC timestamps in ISO 8601 so clients can
+            # reliably parse and convert to the viewer's local timezone.
+            # Use timezone-aware API to avoid DeprecationWarning for utcnow().
+            current_time = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
             if count:
                 # 3. Save to Database
