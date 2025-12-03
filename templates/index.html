@@ -79,7 +79,16 @@
                 
                 // Format number with commas (e.g., 140,000)
                 document.getElementById('player-count').innerText = data.count.toLocaleString();
-                document.getElementById('last-updated').innerText = `Last updated: ${data.timestamp}`;
+                // Parse the timestamp returned by the API (UTC ISO 8601) and
+                // display it in the viewer's local timezone.
+                try {
+                    const lastDate = new Date(data.timestamp);
+                    const lastUpdatedStr = lastDate.toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' });
+                    document.getElementById('last-updated').innerText = `Last updated: ${lastUpdatedStr}`;
+                } catch (e) {
+                    // Fallback to raw timestamp if parsing fails
+                    document.getElementById('last-updated').innerText = `Last updated: ${data.timestamp}`;
+                }
             } catch (error) {
                 console.error('Error fetching latest:', error);
                 document.getElementById('player-count').innerText = "Offline";
