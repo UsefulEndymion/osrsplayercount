@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSRS Population Tracker</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            text-align: center;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .card {
+            background-color: #1e1e1e;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            margin-bottom: 20px;
+        }
+        h1 { margin-top: 0; color: #ff9800; }
+        .big-number {
+            font-size: 3em;
+            font-weight: bold;
+            color: #4caf50;
+        }
+        .timestamp { color: #888; font-size: 0.9em; }
+        canvas { max-height: 400px; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="card">
+            <h1>OSRS Players Online</h1>
+            <div id="player-count" class="big-number">Loading...</div>
+            <div id="last-updated" class="timestamp">Wait a moment...</div>
+        </div>
+
+        <div class="card">
+            <canvas id="populationChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const API_BASE = '';
+
+        // 1. Fetch and Display the Latest Number
+        async function fetchLatest() {
+            try {
+                const response = await fetch(`${API_BASE}/api/latest`);
+                const data = await response.json();
+                
+                // Format number with commas (e.g., 140,000)
+                document.getElementById('player-count').innerText = data.count.toLocaleString();
+                document.getElementById('last-updated').innerText = `Last updated: ${data.timestamp}`;
+            } catch (error) {
+                console.error('Error fetching latest:', error);
+                document.getElementById('player-count').innerText = "Offline";
+            }
+        }
+
+        // 2. Fetch History and Render Graph
+        async function renderChart() {
+            try {
+                // Get last 24 hours of data (288 points)
+                const response = await fetch(`${API_BASE}/api/history?limit=288`);
+                const historyData = await response.json();
+
+                // Split data into two arrays for the chart: Labels (Time) and Data (Count)
+                const labels = historyData.map(item => {
+                    // Convert timestamp "2023-01-01 12:00:00" to just "12:00"
+                    const date = new Date(item.timestamp);
+                    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                });
+                const counts = historyData.map(item => item.count);
+
+                // Draw the Chart
+                const ctx = document.getElementById('populationChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Online Players',
+                            data: counts,
+                            borderColor: '#ff9800', // Orange line
+                            backgroundColor: 'rgba(255, 152, 0, 0.1)', // Light orange fill
+                            borderWidth: 2,
+                            pointRadius: 0, // Hide dots for a smooth line
+                            fill: true,
+                            tension: 0.4 // Smooth curves
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        interaction: {
+                            intersect: false,
+                            mode: 'index',
+                        },
+                        scales: {
+                            x: { grid: { color: '#333' } },
+                            y: { grid: { color: '#333' } }
+                        }
+                    }
+                });
+
+            } catch (error) {
+                console.error('Error rendering chart:', error);
+            }
+        }
+
+        // Run functions on page load
+        fetchLatest();
+        renderChart();
+    </script>
+</body>
+</html>

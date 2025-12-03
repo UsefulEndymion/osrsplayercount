@@ -1,0 +1,19 @@
+.venv/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# SQLite database
+osrs_data.db
+*.db
+*.sqlite3
+
+# Logs and misc
+*.log
