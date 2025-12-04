@@ -389,24 +389,16 @@
                     scales: {
                         x: {
                             type: 'time',
-                                time: (function() {
-                                    // granularityInfo can be a string (unit) or {unit, step}
-                                    const info = granularityInfo || 'day';
-                                    const unit = (typeof info === 'object') ? info.unit : info;
-                                    const step = (typeof info === 'object' && info.step) ? info.step : undefined;
-                                    return {
-                                        unit: unit || 'day',
-                                        stepSize: step,
-                                        tooltipFormat: 'DD T',
-                                        displayFormats: {
-                                            minute: 'HH:mm',
-                                            hour: 'HH:mm',
-                                            day: 'MMM d',
-                                            week: 'MMM d',
-                                            month: 'MMM yyyy'
-                                        }
-                                    };
-                                })(),
+                            time: {
+                                tooltipFormat: 'DD T',
+                                displayFormats: {
+                                    minute: 'HH:mm',
+                                    hour: 'HH:mm',
+                                    day: 'MMM d',
+                                    week: 'MMM d',
+                                    month: 'MMM yyyy'
+                                }
+                            },
                             grid: { color: '#333' }
                         },
                         y: { beginAtZero: true, grid: { color: '#333' } }
