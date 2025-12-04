@@ -51,8 +51,8 @@ def get_history():
         - limit (int): return the last `limit` raw rows (default used when no start/end provided; default 288)
         - start (ISO datetime string): include rows with timestamp >= start
         - end (ISO datetime string): include rows with timestamp <= end
-        - unit (str): aggregation unit, one of 'minute', 'hour', 'day'. When provided the server will aggregate points into buckets for that unit.
-        - step (int): when used with `unit=minute`, bucket size in minutes (e.g. 5, 15, 30). Note: minute-level queries are limited to a maximum span of 1 day.
+        - unit (str): aggregation unit, one of 'minute', 'hour', 'day', 'week', 'month'. When provided the server will aggregate points into buckets for that unit.
+            - step (int): when used with `unit=minute`, bucket size in minutes (e.g. 5, 15, 30). Note: minute-level queries are limited to a maximum span of 1 day.
     Behavior:
         - If `unit=minute` and `step` provided the server aggregates into `step`-minute buckets (timestamp returned as ISO UTC) and returns one point per bucket.
         - If `unit` is 'hour' or 'day' the server aggregates by hour/day respectively and returns one point per bucket.
@@ -88,19 +88,23 @@ def get_history():
     start_dt = parse_iso(start)
     end_dt = parse_iso(end)
 
-    # Enforce server-side limit: minute-level queries (unit=minute) cannot span more than 1 day
+    # Enforce server-side limit: minute-level queries (unit=minute) cannot span more than 30 days
     if unit == 'minute' and step:
         # If start/end are provided, validate duration. If missing, treat as last-24h (allowed)
         if start_dt is None and end_dt is None:
-            # allowed; we'll default to last 24h in the query logic if needed
-            pass
+            # Default to the last 24 hours when no start/end provided
+            end_dt = datetime.now(timezone.utc)
+            start_dt = end_dt - timedelta(days=1)
+            # update string params used later in SQL
+            start = start_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+            end = end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
         else:
             # If one of start or end is missing, we can't compute duration accurately — reject request
             if start_dt is None or end_dt is None:
                 return jsonify({"error": "Please provide both 'start' and 'end' for minute-level queries."}), 400
             duration = end_dt - start_dt
-            if duration > timedelta(days=1):
-                return jsonify({"error": "Minute-level queries are limited to a maximum span of 1 day."}), 400
+            if duration > timedelta(days=30):
+                return jsonify({"error": "Minute-level queries are limited to a maximum span of 30 days."}), 400
 
     conn = get_db_connection()
 
@@ -120,23 +124,66 @@ def get_history():
         params = (step_seconds, start, start, end, end, step_seconds)
         rows = conn.execute(sql, params).fetchall()
 
-    elif unit in ('hour', 'day'):
-        # Simple aggregation into hour/day buckets
+    elif unit in ('hour', 'day', 'week', 'month'):
+        # Aggregation into hour/day/week/month buckets
         if unit == 'hour':
+            # bucket on the hour
             bucket_fmt = "%Y-%m-%dT%H:00:00Z"
-        else:
+            sql = f'''
+                SELECT
+                    strftime('{bucket_fmt}', timestamp) AS timestamp,
+                    ROUND(AVG(count)) AS count
+                FROM players
+                WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
+                GROUP BY strftime('{bucket_fmt}', timestamp)
+                ORDER BY strftime('{bucket_fmt}', timestamp) ASC
+            '''
+            params = (start, start, end, end)
+            rows = conn.execute(sql, params).fetchall()
+
+        elif unit == 'day':
+            # bucket by date (midnight UTC)
             bucket_fmt = "%Y-%m-%dT00:00:00Z"
-        sql = f'''
-            SELECT
-                strftime('{bucket_fmt}', timestamp) AS timestamp,
-                ROUND(AVG(count)) AS count
-            FROM players
-            WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
-            GROUP BY timestamp
-            ORDER BY timestamp ASC
-        '''
-        params = (start, start, end, end)
-        rows = conn.execute(sql, params).fetchall()
+            sql = f'''
+                SELECT
+                    strftime('{bucket_fmt}', timestamp) AS timestamp,
+                    ROUND(AVG(count)) AS count
+                FROM players
+                WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
+                GROUP BY strftime('{bucket_fmt}', timestamp)
+                ORDER BY strftime('{bucket_fmt}', timestamp) ASC
+            '''
+            params = (start, start, end, end)
+            rows = conn.execute(sql, params).fetchall()
+
+        elif unit == 'week':
+            # Group by ISO-like year-week. Return the earliest timestamp present in each week
+            # as the bucket timestamp and the averaged count for that week.
+            sql = '''
+                SELECT
+                    MIN(timestamp) AS timestamp,
+                    ROUND(AVG(count)) AS count
+                FROM players
+                WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
+                GROUP BY strftime('%Y-%W', timestamp)
+                ORDER BY strftime('%Y-%W', timestamp) ASC
+            '''
+            params = (start, start, end, end)
+            rows = conn.execute(sql, params).fetchall()
+
+        else:  # month
+            # Bucket by month; return the first day of the month at midnight UTC as timestamp
+            sql = '''
+                SELECT
+                    strftime('%Y-%m-01T00:00:00Z', timestamp) AS timestamp,
+                    ROUND(AVG(count)) AS count
+                FROM players
+                WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
+                GROUP BY strftime('%Y-%m', timestamp)
+                ORDER BY strftime('%Y-%m', timestamp) ASC
+            '''
+            params = (start, start, end, end)
+            rows = conn.execute(sql, params).fetchall()
 
     else:
         # Default: return last `limit` rows (preserve old behavior) or rows between start/end
