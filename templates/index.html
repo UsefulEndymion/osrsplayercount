@@ -336,6 +336,7 @@
                     <div style="margin-top:6px;">This chart shows the number of players online. Use the controls above to change the date range and granularity. For large ranges the backend should return aggregated data for best performance.</div>
                     <div style="margin-top:8px;">How the bot works: a small python script periodically checks the Old School RuneScape homepage, extracts the reported online player count, and stores timestamped samples in the database. It runs at regular intervals (every 5 minutes by default).</div>
                     <div style="margin-top:8px;">Historical data (older than Dec 2, 2025) was sourced from <a href="https://www.misplaceditems.com/rs_tools/graph" target="_blank" rel="noopener noreferrer">misplaceditems.com — RS Tools (graph)</a> as well as <a href="https://playercount.dev/" target="_blank" rel="noopener noreferrer">playercount.dev</a>. That historical dataset is coarser: its timestamps and sample intervals are not as fine-grained as the samples collected by this bot, so recent data (collected by the bot) will appear with higher resolution than the imported history.</div>
+                    <div style="margin-top:8px; color: #ff981f;"><strong>Note:</strong> Detailed world data (including specific world counts, F2P vs Members splits, and regional data) only started being collected on Dec 4, 2025. Any data prior to this date only contains the global player count.</div>
                 </div>
             </div>
         </div>

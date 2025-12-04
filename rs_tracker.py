@@ -184,7 +184,7 @@ def main():
 
     # Track last world scrape time
     last_world_scrape = 0
-    WORLD_SCRAPE_INTERVAL = 300  # 5 minutes (temporarily increased for testing)
+    WORLD_SCRAPE_INTERVAL = 1800  
 
     while True:
         try:
