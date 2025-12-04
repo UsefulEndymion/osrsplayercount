@@ -8,6 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@1.2.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -146,11 +147,14 @@
             <div id="chartError" class="timestamp" style="margin-top:8px; color:#ff6b6b; display:none;"></div>
             <div id="chart-timezone" class="timestamp" style="margin-top:8px;"></div>
             <div id="about-app" style="margin-top:12px; text-align:left; color:#bdbdbd; font-size:0.95em;">
-                <strong>About this chart:</strong>
-                <div style="margin-top:6px;">This chart shows the number of players online. Use the controls above to change the date range and granularity. For large ranges the backend should return aggregated data for best performance.</div>
-                <div style="margin-top:8px;">How the bot works: a small python script periodically checks the Old School RuneScape homepage, extracts the reported online player count, and stores timestamped samples in the database. It runs at regular intervals (every 5 minutes by default).</div>
-                <div style="margin-top:8px;">Historical data (older than this bot's records) was sourced from <a href="https://www.misplaceditems.com/rs_tools/graph" target="_blank" rel="noopener noreferrer">misplaceditems.com — RS Tools (graph)</a> as well as <a href="https://playercount.dev/" target="_blank" rel="noopener noreferrer">playercount.dev</a>. That historical dataset is coarser: its timestamps and sample intervals are not as fine-grained as the samples collected by this bot, so recent data (collected by the bot) will appear with higher resolution than the imported history.</div>
-                <div style="margin-top:8px;">If you rely on long-range views (6 months, 1 year, 5 years, 10 years) the backend may return aggregated points; this reduces payload size and improves performance but also smooths short-term variance.</div>
+                <button id="about-toggle" style="background:#232323; color:#ff9800; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:1em;">More about this site</button>
+                <div id="about-content" style="display:none; margin-top:10px;">
+                    <strong>About this chart:</strong>
+                    <div style="margin-top:6px;">This chart shows the number of players online. Use the controls above to change the date range and granularity. For large ranges the backend should return aggregated data for best performance.</div>
+                    <div style="margin-top:8px;">How the bot works: a small python script periodically checks the Old School RuneScape homepage, extracts the reported online player count, and stores timestamped samples in the database. It runs at regular intervals (every 5 minutes by default).</div>
+                    <div style="margin-top:8px;">Historical data (older than this bot's records) was sourced from <a href="https://www.misplaceditems.com/rs_tools/graph" target="_blank" rel="noopener noreferrer">misplaceditems.com — RS Tools (graph)</a> as well as <a href="https://playercount.dev/" target="_blank" rel="noopener noreferrer">playercount.dev</a>. That historical dataset is coarser: its timestamps and sample intervals are not as fine-grained as the samples collected by this bot, so recent data (collected by the bot) will appear with higher resolution than the imported history.</div>
+                    <div style="margin-top:8px;">If you rely on long-range views (6 months, 1 year, 5 years, 10 years) the backend may return aggregated points; this reduces payload size and improves performance but also smooths short-term variance.</div>
+                </div>
             </div>
         </div>
     </div>
@@ -158,6 +162,18 @@
     <script>
         // Configuration
         const API_BASE = '';
+
+        // Collapsible About section
+        document.addEventListener('DOMContentLoaded', function() {
+            const toggleBtn = document.getElementById('about-toggle');
+            const aboutContent = document.getElementById('about-content');
+            let collapsed = true;
+            toggleBtn.addEventListener('click', function() {
+                collapsed = !collapsed;
+                aboutContent.style.display = collapsed ? 'none' : 'block';
+                toggleBtn.textContent = collapsed ? 'More about this site' : 'Less about this site';
+            });
+        });
 
         // Globals
         let populationChart = null;
@@ -241,6 +257,15 @@
 
             const dataPoints = points.map(p => ({ x: new Date(p.timestamp), y: p.count }));
 
+            // Calculate peak player count
+            let peak = null;
+            let peakTime = null;
+            if (points.length > 0) {
+                peak = points.reduce((max, p) => p.count > max.count ? p : max, points[0]);
+                peakTime = new Date(peak.timestamp).getTime(); // Chart.js expects timestamp (number)
+            }
+
+            // Chart.js config with annotation for peak
             const cfg = {
                 type: 'line',
                 data: {
@@ -264,6 +289,28 @@
                             pan: { enabled: true, mode: 'x' },
                             zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
                         },
+                        annotation: {
+                            annotations: peak ? {
+                                peakLine: {
+                                    type: 'line',
+                                    xMin: peakTime,
+                                    xMax: peakTime,
+                                    borderColor: 'rgba(76, 175, 80, 0.8)',
+                                    borderWidth: 2,
+                                    borderDash: [5, 5],
+                                    label: {
+                                        display: true,
+                                        content: `Peak: ${peak.count.toLocaleString()}`,
+                                        position: '20%',
+                                        backgroundColor: 'rgba(76, 175, 80, 0.8)',
+                                        color: 'white',
+                                        font: {
+                                            size: 12
+                                        }
+                                    }
+                                }
+                            } : {}
+                        },
                         tooltip: {
                             callbacks: {
                                 title: function(context) {
@@ -275,7 +322,7 @@
                                     return `Online Players: ${context.parsed.y.toLocaleString()}`;
                                 }
                             }
-                        }
+                        },
                     },
                     scales: {
                         x: {
