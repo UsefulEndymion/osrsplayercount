@@ -43,6 +43,28 @@ def get_latest():
     else:
         return jsonify({"error": "No data found"}), 404
 
+@app.route('/api/metadata')
+def get_metadata():
+    """Returns lists of worlds, locations, and activities for filtering."""
+    conn = get_db_connection()
+    
+    # Get Locations
+    locations = conn.execute('SELECT id, name FROM locations ORDER BY name').fetchall()
+    
+    # Get Activities
+    activities = conn.execute('SELECT id, description FROM activities ORDER BY description').fetchall()
+    
+    # Get Worlds (Distinct world numbers from world_data)
+    worlds = conn.execute('SELECT DISTINCT world_number FROM world_data ORDER BY world_number').fetchall()
+    
+    conn.close()
+    
+    return jsonify({
+        "locations": [{"id": row['id'], "name": row['name']} for row in locations],
+        "activities": [{"id": row['id'], "description": row['description']} for row in activities],
+        "worlds": [row['world_number'] for row in worlds]
+    })
+
 @app.route('/api/history')
 def get_history():
     """
@@ -51,21 +73,27 @@ def get_history():
         - limit (int): return the last `limit` raw rows (default used when no start/end provided; default 288)
         - start (ISO datetime string): include rows with timestamp >= start
         - end (ISO datetime string): include rows with timestamp <= end
-        - unit (str): aggregation unit, one of 'minute', 'hour', 'day', 'week', 'month'. When provided the server will aggregate points into buckets for that unit.
-            - step (int): when used with `unit=minute`, bucket size in minutes (e.g. 5, 15, 30). Note: minute-level queries are limited to a maximum span of 1 day.
-    Behavior:
-        - If `unit=minute` and `step` provided the server aggregates into `step`-minute buckets (timestamp returned as ISO UTC) and returns one point per bucket.
-        - If `unit` is 'hour' or 'day' the server aggregates by hour/day respectively and returns one point per bucket.
-        - If no aggregation params provided, the endpoint returns raw rows between `start`/`end` (if given) or the last `limit` rows.
-    Response: JSON array of objects: [{"timestamp": <ISO UTC string>, "count": <number>}, ...]
+        - unit (str): aggregation unit, one of 'minute', 'hour', 'day', 'week', 'month'.
+        - step (int): bucket size in minutes.
+        - agg (str): 'max' or 'avg'.
+        
+        NEW FILTERS:
+        - world_id (int): Filter by specific world number.
+        - location_id (int): Filter by location ID.
+        - is_f2p (bool/int): Filter by F2P status (1=True, 0=False).
     """
     # Query params
     limit = request.args.get('limit', default=None, type=int)
     start = request.args.get('start', default=None, type=str)
     end = request.args.get('end', default=None, type=str)
-    unit = request.args.get('unit', default=None, type=str)  # e.g., 'minute','hour','day'
-    step = request.args.get('step', default=None, type=int)   # e.g., 5 (minutes)
+    unit = request.args.get('unit', default=None, type=str)
+    step = request.args.get('step', default=None, type=int)
     agg = request.args.get('agg', default='max', type=str)
+    
+    # New Filters
+    world_id = request.args.get('world_id', default=None, type=int)
+    location_id = request.args.get('location_id', default=None, type=int)
+    is_f2p = request.args.get('is_f2p', default=None, type=int) # 0 or 1
 
     # Determine aggregation SQL function
     agg_func = "MAX(count)"
@@ -98,111 +126,172 @@ def get_history():
     if unit == 'minute' and step:
         # If start/end are provided, validate duration. If missing, treat as last-24h (allowed)
         if start_dt is None and end_dt is None:
-            # Default to the last 24 hours when no start/end provided
-            end_dt = datetime.now(timezone.utc)
-            start_dt = end_dt - timedelta(days=1)
-            # update string params used later in SQL
-            start = start_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-            end = end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-        else:
-            # If one of start or end is missing, we can't compute duration accurately — reject request
-            if start_dt is None or end_dt is None:
-                return jsonify({"error": "Please provide both 'start' and 'end' for minute-level queries."}), 400
+            pass # Defaults to last 24h later
+        elif start_dt and end_dt:
             duration = end_dt - start_dt
             if duration > timedelta(days=30):
-                return jsonify({"error": "Minute-level queries are limited to a maximum span of 30 days."}), 400
+                return jsonify({"error": "Minute-level queries cannot span more than 30 days. Please use a larger unit (hour/day) or a shorter time range."}), 400
+        elif start_dt:
+            # If only start is provided, check against now
+            duration = datetime.now(timezone.utc) - start_dt
+            if duration > timedelta(days=30):
+                return jsonify({"error": "Minute-level queries cannot span more than 30 days."}), 400
 
     conn = get_db_connection()
-
-    # If client requested aggregation by minute with a step (e.g., 5m,15m,30m)
-    if unit == 'minute' and step:
-        # Aggregate into buckets of `step` minutes using unix epoch arithmetic
-        step_seconds = step * 60
-        sql = f'''
-            SELECT
-                strftime('%Y-%m-%dT%H:%M:%SZ', (strftime('%s', timestamp) - (strftime('%s', timestamp) % ?)), 'unixepoch') AS timestamp,
-                {agg_func} AS count
-            FROM players
-            WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
-            GROUP BY (strftime('%s', timestamp) - (strftime('%s', timestamp) % ?))
-            ORDER BY timestamp ASC
-        '''
-        params = (step_seconds, start, start, end, end, step_seconds)
-        rows = conn.execute(sql, params).fetchall()
-
-    elif unit in ('hour', 'day', 'week', 'month'):
-        # Aggregation into hour/day/week/month buckets
-        if unit == 'hour':
-            # bucket on the hour
-            bucket_fmt = "%Y-%m-%dT%H:00:00Z"
-            sql = f'''
-                SELECT
-                    strftime('{bucket_fmt}', timestamp) AS timestamp,
-                    {agg_func} AS count
-                FROM players
-                WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
-                GROUP BY strftime('{bucket_fmt}', timestamp)
-                ORDER BY strftime('{bucket_fmt}', timestamp) ASC
-            '''
-            params = (start, start, end, end)
-            rows = conn.execute(sql, params).fetchall()
-
-        elif unit == 'day':
-            # bucket by date (midnight UTC)
-            bucket_fmt = "%Y-%m-%dT00:00:00Z"
-            sql = f'''
-                SELECT
-                    strftime('{bucket_fmt}', timestamp) AS timestamp,
-                    {agg_func} AS count
-                FROM players
-                WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
-                GROUP BY strftime('{bucket_fmt}', timestamp)
-                ORDER BY strftime('{bucket_fmt}', timestamp) ASC
-            '''
-            params = (start, start, end, end)
-            rows = conn.execute(sql, params).fetchall()
-
-        elif unit == 'week':
-            # Group by ISO-like year-week. Return the earliest timestamp present in each week
-            # as the bucket timestamp and the averaged count for that week.
-            sql = f'''
-                SELECT
-                    MIN(timestamp) AS timestamp,
-                    {agg_func} AS count
-                FROM players
-                WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
-                GROUP BY strftime('%Y-%W', timestamp)
-                ORDER BY strftime('%Y-%W', timestamp) ASC
-            '''
-            params = (start, start, end, end)
-            rows = conn.execute(sql, params).fetchall()
-
-        else:  # month
-            # Bucket by month; return the first day of the month at midnight UTC as timestamp
-            sql = f'''
-                SELECT
-                    strftime('%Y-%m-01T00:00:00Z', timestamp) AS timestamp,
-                    {agg_func} AS count
-                FROM players
-                WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
-                GROUP BY strftime('%Y-%m', timestamp)
-                ORDER BY strftime('%Y-%m', timestamp) ASC
-            '''
-            params = (start, start, end, end)
-            rows = conn.execute(sql, params).fetchall()
-
-    else:
-        # Default: return last `limit` rows (preserve old behavior) or rows between start/end
-        if start or end:
-            sql = 'SELECT timestamp, count FROM players WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?) ORDER BY timestamp ASC'
-            params = (start, start, end, end)
-            rows = conn.execute(sql, params).fetchall()
+    
+    # --- QUERY CONSTRUCTION ---
+    
+    # Determine if we are querying the main 'players' table or the 'world_data' system
+    use_world_data = (world_id is not None) or (location_id is not None) or (is_f2p is not None)
+    
+    if use_world_data:
+        # We are querying detailed world data
+        # Note: Aggregation (unit/step) logic for world data is complex. 
+        # For now, let's implement raw data return for world data, 
+        # or simple aggregation if requested.
+        
+        # Base Join
+        from_clause = "FROM world_data wd JOIN scrape_events se ON wd.scrape_id = se.id"
+        where_clauses = []
+        params = []
+        group_by = ""
+        order_by = "ORDER BY se.timestamp ASC"
+        
+        # If filtering by location or f2p, we need world_details
+        if location_id is not None or is_f2p is not None:
+            from_clause += " JOIN world_details det ON wd.detail_id = det.id"
+            
+        # Select Timestamp
+        select_clause = "SELECT se.timestamp as timestamp"
+        
+        # Select Count
+        if world_id is not None:
+            # Specific world -> just the count
+            select_clause += ", wd.player_count as count"
+            where_clauses.append("wd.world_number = ?")
+            params.append(world_id)
         else:
-            # Use limit if provided, otherwise default to 288
-            use_limit = limit if limit is not None else 288
-            sql = 'SELECT timestamp, count FROM players ORDER BY id DESC LIMIT ?'
-            rows = conn.execute(sql, (use_limit,)).fetchall()
-            rows = rows[::-1]  # reverse chronological order
+            # Location or F2P -> Sum of counts
+            select_clause += ", SUM(wd.player_count) as count"
+            group_by = "GROUP BY se.id" # Group by scrape event
+            
+            if location_id is not None:
+                where_clauses.append("det.location_id = ?")
+                params.append(location_id)
+            
+            if is_f2p is not None:
+                where_clauses.append("det.is_f2p = ?")
+                params.append(is_f2p)
+
+        # Time Filters
+        if start_dt:
+            where_clauses.append("se.timestamp >= ?")
+            params.append(start_dt.isoformat())
+        if end_dt:
+            where_clauses.append("se.timestamp <= ?")
+            params.append(end_dt.isoformat())
+            
+        # Limit (only if no time range)
+        limit_clause = ""
+        if not start_dt and not end_dt and limit:
+             lim = limit if limit else 288
+             limit_clause = f"LIMIT {lim}"
+             order_by = "ORDER BY se.timestamp DESC"
+             
+        where_str = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+        query = f"{select_clause} {from_clause} {where_str} {group_by} {order_by} {limit_clause}"
+        
+        try:
+            rows = conn.execute(query, params).fetchall()
+            conn.close()
+            
+            results = []
+            for row in rows:
+                results.append({
+                    "timestamp": row['timestamp'],
+                    "count": row['count']
+                })
+                
+            if "DESC" in order_by:
+                results.reverse()
+                
+            return jsonify(results)
+        except Exception as e:
+            conn.close()
+            return jsonify({"error": str(e)}), 500
+             
+    else:
+        # Standard Global History (players table)
+        table = "players"
+        col_ts = "timestamp"
+        col_count = "count"
+        
+        select_clause = ""
+        group_by = ""
+        
+        if unit:
+            # Aggregation Logic
+            if unit == 'minute':
+                step_seconds = (step if step else 5) * 60
+                select_clause = f"SELECT datetime((strftime('%s', {col_ts}) / {step_seconds}) * {step_seconds}, 'unixepoch') as timestamp, {agg_func} as count"
+                group_by = f"GROUP BY (strftime('%s', {col_ts}) / {step_seconds})"
+            elif unit == 'hour':
+                select_clause = f"SELECT strftime('%Y-%m-%dT%H:00:00Z', {col_ts}) as timestamp, {agg_func} as count"
+                group_by = f"GROUP BY strftime('%Y-%m-%dT%H', {col_ts})"
+            elif unit == 'day':
+                select_clause = f"SELECT strftime('%Y-%m-%d', {col_ts}) as timestamp, {agg_func} as count"
+                group_by = f"GROUP BY strftime('%Y-%m-%d', {col_ts})"
+            elif unit == 'week':
+                select_clause = f"SELECT date({col_ts}, 'weekday 0', '-6 days') as timestamp, {agg_func} as count"
+                group_by = f"GROUP BY strftime('%Y-%W', {col_ts})"
+            elif unit == 'month':
+                select_clause = f"SELECT strftime('%Y-%m-01', {col_ts}) as timestamp, {agg_func} as count"
+                group_by = f"GROUP BY strftime('%Y-%m', {col_ts})"
+        else:
+            # Raw Data
+            select_clause = f"SELECT {col_ts}, {col_count}"
+        
+        from_clause = f"FROM {table}"
+        where_clauses = []
+        params = []
+        
+        if start_dt:
+            where_clauses.append(f"{col_ts} >= ?")
+            params.append(start_dt.isoformat())
+        if end_dt:
+            where_clauses.append(f"{col_ts} <= ?")
+            params.append(end_dt.isoformat())
+            
+        limit_clause = ""
+        order_by = "ORDER BY timestamp ASC"
+        
+        if not start_dt and not end_dt and not unit:
+            lim = limit if limit else 288
+            limit_clause = f"LIMIT {lim}"
+            order_by = "ORDER BY timestamp DESC"
+
+        where_str = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+        query = f"{select_clause} {from_clause} {where_str} {group_by} {order_by} {limit_clause}"
+        
+        try:
+            rows = conn.execute(query, params).fetchall()
+            conn.close()
+            
+            results = []
+            for row in rows:
+                results.append({
+                    "timestamp": row['timestamp'],
+                    "count": row['count']
+                })
+                
+            if "DESC" in order_by:
+                results.reverse()
+                
+            return jsonify(results)
+            
+        except Exception as e:
+            conn.close()
+            return jsonify({"error": str(e)}), 500
 
     conn.close()
 
