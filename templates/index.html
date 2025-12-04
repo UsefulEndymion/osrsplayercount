@@ -355,7 +355,7 @@
                 const startDt = new Date(startVal);
                 const endDt = new Date(endVal);
                 const durationMs = endDt - startDt;
-                const oneDayMs = 24 * 60 * 60 * 1000;
+                const oneDayMs = 30 * 24 * 60 * 60 * 1000;
                 const disableMinutes = durationMs > oneDayMs;
 
                 // iterate options and disable those ending with 'm'

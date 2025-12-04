@@ -88,7 +88,7 @@ def get_history():
     start_dt = parse_iso(start)
     end_dt = parse_iso(end)
 
-    # Enforce server-side limit: minute-level queries (unit=minute) cannot span more than 1 day
+    # Enforce server-side limit: minute-level queries (unit=minute) cannot span more than 30 days
     if unit == 'minute' and step:
         # If start/end are provided, validate duration. If missing, treat as last-24h (allowed)
         if start_dt is None and end_dt is None:
@@ -103,8 +103,8 @@ def get_history():
             if start_dt is None or end_dt is None:
                 return jsonify({"error": "Please provide both 'start' and 'end' for minute-level queries."}), 400
             duration = end_dt - start_dt
-            if duration > timedelta(days=1):
-                return jsonify({"error": "Minute-level queries are limited to a maximum span of 1 day."}), 400
+            if duration > timedelta(days=30):
+                return jsonify({"error": "Minute-level queries are limited to a maximum span of 30 days."}), 400
 
     conn = get_db_connection()
 
