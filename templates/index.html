@@ -232,10 +232,44 @@
         <div class="card">
             <h1>OSRS Players Online</h1>
             <div id="player-count" class="big-number">Loading...</div>
+            <div id="player-breakdown" style="font-size: 1.1em; color: #d4d4d4; margin-bottom: 8px; display: none;">
+                <span style="color: #ffff00;">Members: <span id="members-count">...</span></span>
+                <span style="margin: 0 10px;">|</span>
+                <span style="color: #aaaaaa;">F2P: <span id="f2p-count">...</span></span>
+            </div>
             <div id="last-updated" class="timestamp">Wait a moment...</div>
         </div>
 
         <div class="card">
+            <!-- New Filters Row -->
+            <div style="display:flex; flex-wrap:wrap; gap:12px; justify-content:center; align-items:center; margin-bottom:12px; padding-bottom:12px; border-bottom: 1px solid #383023;">
+                <label style="font-size:0.9em; color:#bdbdbd;">World:
+                    <select id="worldSelect">
+                        <option value="">All Worlds</option>
+                    </select>
+                </label>
+                <label style="font-size:0.9em; color:#bdbdbd;">Location:
+                    <select id="locationSelect">
+                        <option value="">All Locations</option>
+                    </select>
+                </label>
+                <label style="font-size:0.9em; color:#bdbdbd;">Type:
+                    <select id="f2pSelect">
+                        <option value="">All Types</option>
+                        <option value="1">Free-to-Play</option>
+                        <option value="0">Members</option>
+                    </select>
+                </label>
+                <label style="font-size:0.9em; color:#bdbdbd; border-left: 1px solid #5b4a3c; padding-left: 12px; margin-left: 4px;">Compare:
+                    <select id="compareSelect" style="background:#383023; border-color:#ff981f;">
+                        <option value="none">None</option>
+                        <option value="type">F2P vs Members</option>
+                        <option value="location">Regions</option>
+                        <option value="worlds">All Worlds</option>
+                    </select>
+                </label>
+            </div>
+
             <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:center; align-items:center; margin-bottom:12px;">
                 <label style="font-size:0.9em; color:#bdbdbd;">Granularity:
                     <select id="granularitySelect">
@@ -302,6 +336,7 @@
                     <div style="margin-top:6px;">This chart shows the number of players online. Use the controls above to change the date range and granularity. For large ranges the backend should return aggregated data for best performance.</div>
                     <div style="margin-top:8px;">How the bot works: a small python script periodically checks the Old School RuneScape homepage, extracts the reported online player count, and stores timestamped samples in the database. It runs at regular intervals (every 5 minutes by default).</div>
                     <div style="margin-top:8px;">Historical data (older than Dec 2, 2025) was sourced from <a href="https://www.misplaceditems.com/rs_tools/graph" target="_blank" rel="noopener noreferrer">misplaceditems.com — RS Tools (graph)</a> as well as <a href="https://playercount.dev/" target="_blank" rel="noopener noreferrer">playercount.dev</a>. That historical dataset is coarser: its timestamps and sample intervals are not as fine-grained as the samples collected by this bot, so recent data (collected by the bot) will appear with higher resolution than the imported history.</div>
+                    <div style="margin-top:8px; color: #ff981f;"><strong>Note:</strong> Detailed world data (including specific world counts, F2P vs Members splits, and regional data) only started being collected on Dec 4, 2025. Any data prior to this date only contains the global player count.</div>
                 </div>
             </div>
         </div>
@@ -326,11 +361,43 @@
         // Globals
         let populationChart = null;
         let rawHistory = []; // cache of last fetched raw points
+        let globalMetadata = { locations: [], worlds: [] }; // Store metadata for comparison logic
 
         // Utility: format JS Date -> ISO used by datetime-local (without seconds)
         function toLocalInputISO(date) {
             const pad = n => String(n).padStart(2, '0');
             return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+        }
+
+        // Fetch metadata for filters
+        async function fetchMetadata() {
+            try {
+                const response = await fetch(`${API_BASE}/api/metadata`);
+                const data = await response.json();
+                globalMetadata = data; // Save for later use
+                
+                // Populate Worlds
+                const worldSelect = document.getElementById('worldSelect');
+                data.worlds.forEach(w => {
+                    const opt = document.createElement('option');
+                    opt.value = w;
+                    opt.textContent = `World ${parseInt(w) + 300}`;
+                    worldSelect.appendChild(opt);
+                });
+
+                // Populate Locations
+                const locSelect = document.getElementById('locationSelect');
+                data.locations.forEach(loc => {
+                    const opt = document.createElement('option');
+                    opt.value = loc.id;
+                    opt.textContent = loc.name;
+                    locSelect.appendChild(opt);
+                });
+
+                // Activities are available in data.activities if we want to add them later
+            } catch (error) {
+                console.error('Error fetching metadata:', error);
+            }
         }
 
         // Fetch latest player count
@@ -339,6 +406,14 @@
                 const response = await fetch(`${API_BASE}/api/latest`);
                 const data = await response.json();
                 document.getElementById('player-count').innerText = data.count.toLocaleString();
+                
+                // Update breakdown if available
+                if (data.f2p_count !== undefined && data.members_count !== undefined) {
+                    document.getElementById('f2p-count').innerText = data.f2p_count.toLocaleString();
+                    document.getElementById('members-count').innerText = data.members_count.toLocaleString();
+                    document.getElementById('player-breakdown').style.display = 'block';
+                }
+
                 // Parse the timestamp returned by the API (UTC ISO 8601) and
                 // display it in the viewer's local timezone.
                 try {
@@ -368,7 +443,7 @@
         }
 
         // Fetch history from API with optional start/end (ISO) and unit/step for server-side aggregation
-        async function fetchHistory({start=null, end=null, unit=null, step=null, limit=null, agg=null} = {}) {
+        async function fetchHistory({start=null, end=null, unit=null, step=null, limit=null, agg=null, world_id=null, location_id=null, is_f2p=null} = {}) {
             try {
                 const params = new URLSearchParams();
                 if (start) params.set('start', start);
@@ -377,6 +452,11 @@
                 if (step) params.set('step', step);
                 if (limit) params.set('limit', limit);
                 if (agg) params.set('agg', agg);
+                
+                if (world_id) params.set('world_id', world_id);
+                if (location_id) params.set('location_id', location_id);
+                if (is_f2p !== null && is_f2p !== "") params.set('is_f2p', is_f2p);
+
                 const response = await fetch(`${API_BASE}/api/history?${params.toString()}`);
                 const contentType = response.headers.get('content-type') || '';
                 // If server returned non-OK (e.g., 400), try to show the server message
@@ -399,35 +479,51 @@
             }
         }
 
-        function buildChart(points, granularityInfo) {
+        function buildChart(datasets, granularityInfo) {
             const ctx = document.getElementById('populationChart').getContext('2d');
             const viewerTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local';
             document.getElementById('chart-timezone').innerText = `Times shown in: ${viewerTimeZone}`;
 
-            const dataPoints = points.map(p => ({ x: new Date(p.timestamp), y: p.count }));
+            // If we receive a single array of points (legacy call), wrap it
+            if (Array.isArray(datasets) && datasets.length > 0 && datasets[0].timestamp) {
+                datasets = [{
+                    label: 'Online Players',
+                    data: datasets.map(p => ({ x: new Date(p.timestamp), y: p.count })),
+                    borderColor: '#ffff00',
+                    backgroundColor: 'rgba(255, 255, 0, 0.1)'
+                }];
+            }
 
-            // Calculate peak player count
+            // Calculate global peak across all datasets
             let peak = null;
             let peakTime = null;
-            if (points.length > 0) {
-                peak = points.reduce((max, p) => p.count > max.count ? p : max, points[0]);
-                peakTime = new Date(peak.timestamp).getTime(); // Chart.js expects timestamp (number)
-            }
+            let peakValue = -1;
+
+            datasets.forEach(ds => {
+                if (ds.data.length > 0) {
+                    const localPeak = ds.data.reduce((max, p) => p.y > max.y ? p : max, ds.data[0]);
+                    if (localPeak.y > peakValue) {
+                        peakValue = localPeak.y;
+                        peak = localPeak;
+                        peakTime = localPeak.x.getTime();
+                    }
+                }
+            });
 
             // Chart.js config with annotation for peak
             const cfg = {
                 type: 'line',
                 data: {
-                    datasets: [{
-                        label: 'Online Players',
-                        data: dataPoints,
-                        borderColor: '#ffff00', // OSRS Yellow
-                        backgroundColor: 'rgba(255, 255, 0, 0.1)',
+                    datasets: datasets.map(ds => ({
+                        label: ds.label,
+                        data: ds.data,
+                        borderColor: ds.borderColor,
+                        backgroundColor: ds.backgroundColor || 'rgba(0,0,0,0)',
                         borderWidth: 2,
                         pointRadius: 0,
-                        fill: true,
+                        fill: !!ds.backgroundColor, // Only fill if background color provided
                         tension: 0.25
-                    }]
+                    }))
                 },
                 options: {
                     responsive: true,
@@ -449,7 +545,7 @@
                                     borderDash: [5, 5],
                                     label: {
                                         display: true,
-                                        content: `Peak: ${peak.count.toLocaleString()}`,
+                                        content: `Peak: ${peakValue.toLocaleString()}`,
                                         position: '20%',
                                         backgroundColor: 'rgba(255, 0, 0, 0.8)',
                                         color: 'white',
@@ -476,7 +572,7 @@
                                     return new Date(d).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
                                 },
                                 label: function(context) {
-                                    return `Online Players: ${context.parsed.y.toLocaleString()}`;
+                                    return `${context.dataset.label}: ${context.parsed.y.toLocaleString()}`;
                                 }
                             }
                         },
@@ -526,7 +622,7 @@
         }
 
         function setControlsEnabled(enabled) {
-            const ids = ['applyRangeBtn','resetZoomBtn','granularitySelect','aggregationSelect','startInput','endInput','presetSelect'];
+            const ids = ['applyRangeBtn','resetZoomBtn','granularitySelect','aggregationSelect','startInput','endInput','presetSelect', 'worldSelect', 'locationSelect', 'f2pSelect', 'compareSelect'];
             ids.forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.disabled = !enabled;
@@ -583,6 +679,11 @@
             const agg = document.getElementById('aggregationSelect').value;
             const startVal = document.getElementById('startInput').value;
             const endVal = document.getElementById('endInput').value;
+            
+            const worldId = document.getElementById('worldSelect').value;
+            const locationId = document.getElementById('locationSelect').value;
+            const isF2p = document.getElementById('f2pSelect').value;
+            const compareMode = document.getElementById('compareSelect').value;
 
             const startISO = startVal ? new Date(startVal).toISOString() : null;
             const endISO = endVal ? new Date(endVal).toISOString() : null;
@@ -598,9 +699,107 @@
             setControlsEnabled(false);
             showChartError('');
             showSpinner();
+            
             try {
-                const history = await fetchHistory({ start: startISO, end: endISO, unit: unit, step: step, agg: agg });
-                buildChart(history, { unit, step });
+                let datasets = [];
+                const colors = ['#ffff00', '#00ff00', '#00ffff', '#ff00ff', '#ff981f', '#ff0000', '#ffffff', '#aaaaaa'];
+
+                if (compareMode === 'none') {
+                    // Standard single series fetch
+                    const history = await fetchHistory({ 
+                        start: startISO, 
+                        end: endISO, 
+                        unit: unit, 
+                        step: step, 
+                        agg: agg,
+                        world_id: worldId,
+                        location_id: locationId,
+                        is_f2p: isF2p
+                    });
+                    
+                    datasets = [{
+                        label: 'Online Players',
+                        data: history.map(p => ({ x: new Date(p.timestamp), y: p.count })),
+                        borderColor: '#ffff00',
+                        backgroundColor: 'rgba(255, 255, 0, 0.1)'
+                    }];
+                } else if (compareMode === 'type') {
+                    // Compare F2P vs Members
+                    // We ignore the 'is_f2p' filter from the dropdown if it's set, as we are splitting by it.
+                    // We keep world/location filters if set.
+                    
+                    const [f2pData, memData] = await Promise.all([
+                        fetchHistory({ start: startISO, end: endISO, unit, step, agg, world_id: worldId, location_id: locationId, is_f2p: 1 }),
+                        fetchHistory({ start: startISO, end: endISO, unit, step, agg, world_id: worldId, location_id: locationId, is_f2p: 0 })
+                    ]);
+
+                    datasets = [
+                        {
+                            label: 'Free-to-Play',
+                            data: f2pData.map(p => ({ x: new Date(p.timestamp), y: p.count })),
+                            borderColor: '#aaaaaa', // Silver/Grey for F2P
+                            backgroundColor: 'rgba(170, 170, 170, 0.1)'
+                        },
+                        {
+                            label: 'Members',
+                            data: memData.map(p => ({ x: new Date(p.timestamp), y: p.count })),
+                            borderColor: '#ffff00', // Gold for Members
+                            backgroundColor: 'rgba(255, 255, 0, 0.1)'
+                        }
+                    ];
+                } else if (compareMode === 'location') {
+                    // Compare Regions
+                    // We ignore 'location_id' filter.
+                    // We keep world/f2p filters if set (though world implies location, so usually world filter should be empty)
+                    
+                    // Use globalMetadata.locations to get list
+                    const locs = globalMetadata.locations;
+                    const requests = locs.map(loc => 
+                        fetchHistory({ start: startISO, end: endISO, unit, step, agg, world_id: worldId, is_f2p: isF2p, location_id: loc.id })
+                            .then(data => ({ loc, data }))
+                    );
+                    
+                    const results = await Promise.all(requests);
+                    
+                    datasets = results.map((res, idx) => ({
+                        label: res.loc.name,
+                        data: res.data.map(p => ({ x: new Date(p.timestamp), y: p.count })),
+                        borderColor: colors[idx % colors.length],
+                        backgroundColor: null // No fill for many lines to avoid clutter
+                    }));
+                } else if (compareMode === 'worlds') {
+                    // Compare All Worlds (Filtered by other selections)
+                    // We iterate all known worlds and fetch data for each, respecting location/f2p filters.
+                    // If a world doesn't match the filters, the API returns empty data, and we skip it.
+                    
+                    const worlds = globalMetadata.worlds;
+                    // Create a promise for each world
+                    const requests = worlds.map(w => 
+                        fetchHistory({ 
+                            start: startISO, end: endISO, unit, step, agg, 
+                            world_id: w, 
+                            location_id: locationId, 
+                            is_f2p: isF2p 
+                        })
+                        .then(data => ({ world: w, data }))
+                        .catch(e => null)
+                    );
+                    
+                    const results = await Promise.all(requests);
+                    
+                    datasets = results
+                        .filter(r => r && r.data && r.data.length > 0)
+                        .map((res, idx) => ({
+                            label: `World ${parseInt(res.world) + 300}`,
+                            data: res.data.map(p => ({ x: new Date(p.timestamp), y: p.count })),
+                            borderColor: colors[idx % colors.length],
+                            backgroundColor: null,
+                            borderWidth: 1, // Thinner lines for mass comparison
+                            pointRadius: 0
+                        }));
+                }
+
+                buildChart(datasets, { unit, step });
             } catch (err) {
                 console.error('Update failed:', err);
                 showChartError(err.message || 'Failed to load data');
@@ -670,6 +869,20 @@
             }
             document.getElementById('granularitySelect').addEventListener('change', updateFromInputs);
             document.getElementById('aggregationSelect').addEventListener('change', updateFromInputs);
+            
+            // When a specific world is selected, reset other filters as they don't apply
+            document.getElementById('worldSelect').addEventListener('change', function() {
+                if (this.value) {
+                    document.getElementById('locationSelect').value = "";
+                    document.getElementById('f2pSelect').value = "";
+                    document.getElementById('compareSelect').value = "none";
+                }
+                updateFromInputs();
+            });
+
+            document.getElementById('locationSelect').addEventListener('change', updateFromInputs);
+            document.getElementById('f2pSelect').addEventListener('change', updateFromInputs);
+            document.getElementById('compareSelect').addEventListener('change', updateFromInputs);
             document.getElementById('resetZoomBtn').addEventListener('click', () => { if (populationChart) populationChart.resetZoom(); });
             
             // Recalculate availability when user edits start/end inputs
@@ -681,6 +894,7 @@
             document.getElementById('endInput').addEventListener('change', onInputChange);
 
             // Initial fetch and render
+            await fetchMetadata();
             await fetchLatest();
             await updateFromInputs();
 
