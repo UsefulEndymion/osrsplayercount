@@ -65,6 +65,12 @@ def get_history():
     end = request.args.get('end', default=None, type=str)
     unit = request.args.get('unit', default=None, type=str)  # e.g., 'minute','hour','day'
     step = request.args.get('step', default=None, type=int)   # e.g., 5 (minutes)
+    agg = request.args.get('agg', default='max', type=str)
+
+    # Determine aggregation SQL function
+    agg_func = "MAX(count)"
+    if agg == 'avg':
+        agg_func = "ROUND(AVG(count))"
 
     # Helper to parse ISO timestamps robustly (accept trailing Z)
     def parse_iso(ts):
@@ -112,10 +118,10 @@ def get_history():
     if unit == 'minute' and step:
         # Aggregate into buckets of `step` minutes using unix epoch arithmetic
         step_seconds = step * 60
-        sql = '''
+        sql = f'''
             SELECT
                 strftime('%Y-%m-%dT%H:%M:%SZ', (strftime('%s', timestamp) - (strftime('%s', timestamp) % ?)), 'unixepoch') AS timestamp,
-                ROUND(AVG(count)) AS count
+                {agg_func} AS count
             FROM players
             WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
             GROUP BY (strftime('%s', timestamp) - (strftime('%s', timestamp) % ?))
@@ -132,7 +138,7 @@ def get_history():
             sql = f'''
                 SELECT
                     strftime('{bucket_fmt}', timestamp) AS timestamp,
-                    ROUND(AVG(count)) AS count
+                    {agg_func} AS count
                 FROM players
                 WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
                 GROUP BY strftime('{bucket_fmt}', timestamp)
@@ -147,7 +153,7 @@ def get_history():
             sql = f'''
                 SELECT
                     strftime('{bucket_fmt}', timestamp) AS timestamp,
-                    ROUND(AVG(count)) AS count
+                    {agg_func} AS count
                 FROM players
                 WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
                 GROUP BY strftime('{bucket_fmt}', timestamp)
@@ -159,10 +165,10 @@ def get_history():
         elif unit == 'week':
             # Group by ISO-like year-week. Return the earliest timestamp present in each week
             # as the bucket timestamp and the averaged count for that week.
-            sql = '''
+            sql = f'''
                 SELECT
                     MIN(timestamp) AS timestamp,
-                    ROUND(AVG(count)) AS count
+                    {agg_func} AS count
                 FROM players
                 WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
                 GROUP BY strftime('%Y-%W', timestamp)
@@ -173,10 +179,10 @@ def get_history():
 
         else:  # month
             # Bucket by month; return the first day of the month at midnight UTC as timestamp
-            sql = '''
+            sql = f'''
                 SELECT
                     strftime('%Y-%m-01T00:00:00Z', timestamp) AS timestamp,
-                    ROUND(AVG(count)) AS count
+                    {agg_func} AS count
                 FROM players
                 WHERE (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
                 GROUP BY strftime('%Y-%m', timestamp)

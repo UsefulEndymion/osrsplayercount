@@ -173,15 +173,24 @@
                 </label>
                 <span id="granularityInfo" class="info" style="display:inline-block;" role="note">
                     <span class="info-icon" aria-hidden="true">ℹ</span>
-                    <span class="tooltip" role="tooltip">Minute options disabled for ranges > 1 day</span>
+                    <span class="tooltip" role="tooltip">Minute options disabled for ranges > 30 days</span>
                 </span>
+                <label style="font-size:0.9em; color:#bdbdbd;">Aggregation:
+                    <select id="aggregationSelect">
+                        <option value="max" selected>Peak</option>
+                        <option value="avg">Average</option>
+                    </select>
+                </label>
 
-                <label style="font-size:0.9em; color:#bdbdbd;">Start:
-                    <input id="startInput" type="datetime-local">
-                </label>
-                <label style="font-size:0.9em; color:#bdbdbd;">End:
-                    <input id="endInput" type="datetime-local">
-                </label>
+
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <label style="font-size:0.9em; color:#bdbdbd;">Start:
+                        <input id="startInput" type="datetime-local">
+                    </label>
+                    <label style="font-size:0.9em; color:#bdbdbd;">End:
+                        <input id="endInput" type="datetime-local">
+                    </label>
+                </div>
 
                 <button id="applyRangeBtn">Update</button>
                 <button id="resetZoomBtn">Reset Zoom</button>
@@ -282,7 +291,7 @@
         }
 
         // Fetch history from API with optional start/end (ISO) and unit/step for server-side aggregation
-        async function fetchHistory({start=null, end=null, unit=null, step=null, limit=null} = {}) {
+        async function fetchHistory({start=null, end=null, unit=null, step=null, limit=null, agg=null} = {}) {
             try {
                 const params = new URLSearchParams();
                 if (start) params.set('start', start);
@@ -290,6 +299,7 @@
                 if (unit) params.set('unit', unit);
                 if (step) params.set('step', step);
                 if (limit) params.set('limit', limit);
+                if (agg) params.set('agg', agg);
                 const response = await fetch(`${API_BASE}/api/history?${params.toString()}`);
                 const contentType = response.headers.get('content-type') || '';
                 // If server returned non-OK (e.g., 400), try to show the server message
@@ -426,7 +436,7 @@
         }
 
         function setControlsEnabled(enabled) {
-            const ids = ['applyRangeBtn','resetZoomBtn','granularitySelect','startInput','endInput','presetSelect'];
+            const ids = ['applyRangeBtn','resetZoomBtn','granularitySelect','aggregationSelect','startInput','endInput','presetSelect'];
             ids.forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.disabled = !enabled;
@@ -480,6 +490,7 @@
         // Update chart using inputs (gracefully handle 400 responses from server)
         async function updateFromInputs() {
             const gran = document.getElementById('granularitySelect').value;
+            const agg = document.getElementById('aggregationSelect').value;
             const startVal = document.getElementById('startInput').value;
             const endVal = document.getElementById('endInput').value;
 
@@ -498,7 +509,7 @@
             showChartError('');
             showSpinner();
             try {
-                const history = await fetchHistory({ start: startISO, end: endISO, unit: unit, step: step });
+                const history = await fetchHistory({ start: startISO, end: endISO, unit: unit, step: step, agg: agg });
                 buildChart(history, { unit, step });
             } catch (err) {
                 console.error('Update failed:', err);
@@ -565,6 +576,7 @@
                 });
             }
             document.getElementById('granularitySelect').addEventListener('change', updateFromInputs);
+            document.getElementById('aggregationSelect').addEventListener('change', updateFromInputs);
             document.getElementById('resetZoomBtn').addEventListener('click', () => { if (populationChart) populationChart.resetZoom(); });
             // Recalculate availability when user edits start/end inputs
             document.getElementById('startInput').addEventListener('change', updateGranularityAvailability);
