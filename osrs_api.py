@@ -1,27 +1,19 @@
 from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
-import sqlite3
 import os
 from datetime import datetime, timedelta, timezone
+import logging
 
-# --- PATH CONFIGURATION ---
-# We need absolute paths for PythonAnywhere
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "osrs_data.db")
+from config import BASE_DIR
+from database import get_db_connection
+
+# Configure Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Tell Flask where to find the static files and templates
 app = Flask(__name__, template_folder=os.path.join(BASE_DIR, 'templates'))
 CORS(app)
-
-DB_NAME = "osrs_data.db"
-
-def get_db_connection():
-    # Connect to the database file
-    conn = sqlite3.connect(DB_PATH)
-    # This little line is magic: it lets us access columns by name (row['count'])
-    # instead of index (row[2])
-    conn.row_factory = sqlite3.Row 
-    return conn
 
 @app.route('/')
 def home():
@@ -31,75 +23,75 @@ def home():
 def get_latest():
     """Returns the most recent single data point with F2P/Members breakdown."""
     conn = get_db_connection()
-    # Get the last row added to players (global count)
-    row = conn.execute('SELECT * FROM players ORDER BY id DESC LIMIT 1').fetchone()
-    
-    f2p_count = 0
-    members_count = 0
-    
-    if row:
-        # Try to get breakdown from world_data if available for this timestamp
-        # We find the scrape_event that matches the timestamp (approx) or just the latest scrape_event
-        # Since players and scrape_events are populated together, the latest scrape_event should correspond.
+    try:
+        # Get the last row added to players (global count)
+        row = conn.execute('SELECT * FROM players ORDER BY id DESC LIMIT 1').fetchone()
         
-        try:
-            latest_scrape = conn.execute('SELECT id FROM scrape_events ORDER BY timestamp DESC LIMIT 1').fetchone()
-            if latest_scrape:
-                scrape_id = latest_scrape['id']
-                
-                # Calculate F2P count
-                f2p_res = conn.execute('''
-                    SELECT SUM(wd.player_count) as count 
-                    FROM world_data wd 
-                    JOIN world_details det ON wd.detail_id = det.id 
-                    WHERE wd.scrape_id = ? AND det.is_f2p = 1
-                ''', (scrape_id,)).fetchone()
-                f2p_count = f2p_res['count'] if f2p_res and f2p_res['count'] else 0
-                
-                # Calculate Members count
-                mem_res = conn.execute('''
-                    SELECT SUM(wd.player_count) as count 
-                    FROM world_data wd 
-                    JOIN world_details det ON wd.detail_id = det.id 
-                    WHERE wd.scrape_id = ? AND det.is_f2p = 0
-                ''', (scrape_id,)).fetchone()
-                members_count = mem_res['count'] if mem_res and mem_res['count'] else 0
-        except Exception as e:
-            print(f"Error fetching breakdown: {e}")
+        f2p_count = 0
+        members_count = 0
+        
+        if row:
+            try:
+                latest_scrape = conn.execute('SELECT id, timestamp FROM scrape_events ORDER BY timestamp DESC LIMIT 1').fetchone()
+                breakdown_ts = None
+                if latest_scrape:
+                    scrape_id = latest_scrape['id']
+                    breakdown_ts = latest_scrape['timestamp']
+                    
+                    # Calculate F2P count
+                    f2p_res = conn.execute('''
+                        SELECT SUM(wd.player_count) as count 
+                        FROM world_data wd 
+                        JOIN world_details det ON wd.detail_id = det.id 
+                        WHERE wd.scrape_id = ? AND det.is_f2p = 1
+                    ''', (scrape_id,)).fetchone()
+                    f2p_count = f2p_res['count'] if f2p_res and f2p_res['count'] else 0
+                    
+                    # Calculate Members count
+                    mem_res = conn.execute('''
+                        SELECT SUM(wd.player_count) as count 
+                        FROM world_data wd 
+                        JOIN world_details det ON wd.detail_id = det.id 
+                        WHERE wd.scrape_id = ? AND det.is_f2p = 0
+                    ''', (scrape_id,)).fetchone()
+                    members_count = mem_res['count'] if mem_res and mem_res['count'] else 0
+            except Exception as e:
+                logger.error(f"Error fetching breakdown: {e}")
 
-    conn.close()
-    
-    if row:
-        return jsonify({
-            "timestamp": row['timestamp'],
-            "count": row['count'],
-            "f2p_count": f2p_count,
-            "members_count": members_count
-        })
-    else:
-        return jsonify({"error": "No data found"}), 404
+        if row:
+            return jsonify({
+                "timestamp": row['timestamp'],
+                "count": row['count'],
+                "f2p_count": f2p_count,
+                "members_count": members_count,
+                "breakdown_timestamp": breakdown_ts
+            })
+        else:
+            return jsonify({"error": "No data found"}), 404
+    finally:
+        conn.close()
 
 @app.route('/api/metadata')
 def get_metadata():
     """Returns lists of worlds, locations, and activities for filtering."""
     conn = get_db_connection()
-    
-    # Get Locations
-    locations = conn.execute('SELECT id, name FROM locations ORDER BY name').fetchall()
-    
-    # Get Activities
-    activities = conn.execute('SELECT id, description FROM activities ORDER BY description').fetchall()
-    
-    # Get Worlds (Distinct world numbers from world_data)
-    worlds = conn.execute('SELECT DISTINCT world_number FROM world_data ORDER BY world_number').fetchall()
-    
-    conn.close()
-    
-    return jsonify({
-        "locations": [{"id": row['id'], "name": row['name']} for row in locations],
-        "activities": [{"id": row['id'], "description": row['description']} for row in activities],
-        "worlds": [row['world_number'] for row in worlds]
-    })
+    try:
+        # Get Locations
+        locations = conn.execute('SELECT id, name FROM locations ORDER BY name').fetchall()
+        
+        # Get Activities
+        activities = conn.execute('SELECT id, description FROM activities ORDER BY description').fetchall()
+        
+        # Get Worlds (Distinct world numbers from world_data)
+        worlds = conn.execute('SELECT DISTINCT world_number FROM world_data ORDER BY world_number').fetchall()
+        
+        return jsonify({
+            "locations": [{"id": row['id'], "name": row['name']} for row in locations],
+            "activities": [{"id": row['id'], "description": row['description']} for row in activities],
+            "worlds": [row['world_number'] for row in worlds]
+        })
+    finally:
+        conn.close()
 
 @app.route('/api/history')
 def get_history():
@@ -174,73 +166,71 @@ def get_history():
                 return jsonify({"error": "Minute-level queries cannot span more than 30 days."}), 400
 
     conn = get_db_connection()
-    
-    # --- QUERY CONSTRUCTION ---
-    
-    # Determine if we are querying the main 'players' table or the 'world_data' system
-    use_world_data = (world_id is not None) or (location_id is not None) or (is_f2p is not None)
-    
-    if use_world_data:
-        # We are querying detailed world data
-        # Note: Aggregation (unit/step) logic for world data is complex. 
-        # For now, let's implement raw data return for world data, 
-        # or simple aggregation if requested.
+    try:
+        # --- QUERY CONSTRUCTION ---
         
-        # Base Join
-        from_clause = "FROM world_data wd JOIN scrape_events se ON wd.scrape_id = se.id"
-        where_clauses = []
-        params = []
-        group_by = ""
-        order_by = "ORDER BY se.timestamp ASC"
+        # Determine if we are querying the main 'players' table or the 'world_data' system
+        use_world_data = (world_id is not None) or (location_id is not None) or (is_f2p is not None)
         
-        # If filtering by location or f2p, we need world_details
-        if location_id is not None or is_f2p is not None:
-            from_clause += " JOIN world_details det ON wd.detail_id = det.id"
+        if use_world_data:
+            # We are querying detailed world data
+            # Note: Aggregation (unit/step) logic for world data is complex. 
+            # For now, let's implement raw data return for world data, 
+            # or simple aggregation if requested.
             
-        # Select Timestamp
-        select_clause = "SELECT se.timestamp as timestamp"
-        
-        # Select Count
-        if world_id is not None:
-            # Specific world -> just the count
-            select_clause += ", wd.player_count as count"
-            where_clauses.append("wd.world_number = ?")
-            params.append(world_id)
-        else:
-            # Location or F2P -> Sum of counts
-            select_clause += ", SUM(wd.player_count) as count"
-            group_by = "GROUP BY se.id" # Group by scrape event
+            # Base Join
+            from_clause = "FROM world_data wd JOIN scrape_events se ON wd.scrape_id = se.id"
+            where_clauses = []
+            params = []
+            group_by = ""
+            order_by = "ORDER BY se.timestamp ASC"
             
-        # Apply Location/F2P filters (applies to both specific world and aggregated queries)
-        if location_id is not None:
-            where_clauses.append("det.location_id = ?")
-            params.append(location_id)
-        
-        if is_f2p is not None:
-            where_clauses.append("det.is_f2p = ?")
-            params.append(is_f2p)
+            # If filtering by location or f2p, we need world_details
+            if location_id is not None or is_f2p is not None:
+                from_clause += " JOIN world_details det ON wd.detail_id = det.id"
+                
+            # Select Timestamp
+            select_clause = "SELECT se.timestamp as timestamp"
+            
+            # Select Count
+            if world_id is not None:
+                # Specific world -> just the count
+                select_clause += ", wd.player_count as count"
+                where_clauses.append("wd.world_number = ?")
+                params.append(world_id)
+            else:
+                # Location or F2P -> Sum of counts
+                select_clause += ", SUM(wd.player_count) as count"
+                group_by = "GROUP BY se.id" # Group by scrape event
+                
+            # Apply Location/F2P filters (applies to both specific world and aggregated queries)
+            if location_id is not None:
+                where_clauses.append("det.location_id = ?")
+                params.append(location_id)
+            
+            if is_f2p is not None:
+                where_clauses.append("det.is_f2p = ?")
+                params.append(is_f2p)
 
-        # Time Filters
-        if start_dt:
-            where_clauses.append("se.timestamp >= ?")
-            params.append(start_dt.isoformat())
-        if end_dt:
-            where_clauses.append("se.timestamp <= ?")
-            params.append(end_dt.isoformat())
+            # Time Filters
+            if start_dt:
+                where_clauses.append("se.timestamp >= ?")
+                params.append(start_dt.isoformat())
+            if end_dt:
+                where_clauses.append("se.timestamp <= ?")
+                params.append(end_dt.isoformat())
+                
+            # Limit (only if no time range)
+            limit_clause = ""
+            if not start_dt and not end_dt and limit:
+                 lim = limit if limit else 288
+                 limit_clause = f"LIMIT {lim}"
+                 order_by = "ORDER BY se.timestamp DESC"
+                 
+            where_str = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+            query = f"{select_clause} {from_clause} {where_str} {group_by} {order_by} {limit_clause}"
             
-        # Limit (only if no time range)
-        limit_clause = ""
-        if not start_dt and not end_dt and limit:
-             lim = limit if limit else 288
-             limit_clause = f"LIMIT {lim}"
-             order_by = "ORDER BY se.timestamp DESC"
-             
-        where_str = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
-        query = f"{select_clause} {from_clause} {where_str} {group_by} {order_by} {limit_clause}"
-        
-        try:
             rows = conn.execute(query, params).fetchall()
-            conn.close()
             
             results = []
             for row in rows:
@@ -253,66 +243,61 @@ def get_history():
                 results.reverse()
                 
             return jsonify(results)
-        except Exception as e:
-            conn.close()
-            return jsonify({"error": str(e)}), 500
-             
-    else:
-        # Standard Global History (players table)
-        table = "players"
-        col_ts = "timestamp"
-        col_count = "count"
-        
-        select_clause = ""
-        group_by = ""
-        
-        if unit:
-            # Aggregation Logic
-            if unit == 'minute':
-                step_seconds = (step if step else 5) * 60
-                select_clause = f"SELECT datetime((strftime('%s', {col_ts}) / {step_seconds}) * {step_seconds}, 'unixepoch') as timestamp, {agg_func} as count"
-                group_by = f"GROUP BY (strftime('%s', {col_ts}) / {step_seconds})"
-            elif unit == 'hour':
-                select_clause = f"SELECT strftime('%Y-%m-%dT%H:00:00Z', {col_ts}) as timestamp, {agg_func} as count"
-                group_by = f"GROUP BY strftime('%Y-%m-%dT%H', {col_ts})"
-            elif unit == 'day':
-                select_clause = f"SELECT strftime('%Y-%m-%d', {col_ts}) as timestamp, {agg_func} as count"
-                group_by = f"GROUP BY strftime('%Y-%m-%d', {col_ts})"
-            elif unit == 'week':
-                select_clause = f"SELECT date({col_ts}, 'weekday 0', '-6 days') as timestamp, {agg_func} as count"
-                group_by = f"GROUP BY strftime('%Y-%W', {col_ts})"
-            elif unit == 'month':
-                select_clause = f"SELECT strftime('%Y-%m-01', {col_ts}) as timestamp, {agg_func} as count"
-                group_by = f"GROUP BY strftime('%Y-%m', {col_ts})"
+                 
         else:
-            # Raw Data
-            select_clause = f"SELECT {col_ts}, {col_count}"
-        
-        from_clause = f"FROM {table}"
-        where_clauses = []
-        params = []
-        
-        if start_dt:
-            where_clauses.append(f"{col_ts} >= ?")
-            params.append(start_dt.isoformat())
-        if end_dt:
-            where_clauses.append(f"{col_ts} <= ?")
-            params.append(end_dt.isoformat())
+            # Standard Global History (players table)
+            table = "players"
+            col_ts = "timestamp"
+            col_count = "count"
             
-        limit_clause = ""
-        order_by = "ORDER BY timestamp ASC"
-        
-        if not start_dt and not end_dt and not unit:
-            lim = limit if limit else 288
-            limit_clause = f"LIMIT {lim}"
-            order_by = "ORDER BY timestamp DESC"
+            select_clause = ""
+            group_by = ""
+            
+            if unit:
+                # Aggregation Logic
+                if unit == 'minute':
+                    step_seconds = (step if step else 5) * 60
+                    select_clause = f"SELECT datetime((strftime('%s', {col_ts}) / {step_seconds}) * {step_seconds}, 'unixepoch') as timestamp, {agg_func} as count"
+                    group_by = f"GROUP BY (strftime('%s', {col_ts}) / {step_seconds})"
+                elif unit == 'hour':
+                    select_clause = f"SELECT strftime('%Y-%m-%dT%H:00:00Z', {col_ts}) as timestamp, {agg_func} as count"
+                    group_by = f"GROUP BY strftime('%Y-%m-%dT%H', {col_ts})"
+                elif unit == 'day':
+                    select_clause = f"SELECT strftime('%Y-%m-%d', {col_ts}) as timestamp, {agg_func} as count"
+                    group_by = f"GROUP BY strftime('%Y-%m-%d', {col_ts})"
+                elif unit == 'week':
+                    select_clause = f"SELECT date({col_ts}, 'weekday 0', '-6 days') as timestamp, {agg_func} as count"
+                    group_by = f"GROUP BY strftime('%Y-%W', {col_ts})"
+                elif unit == 'month':
+                    select_clause = f"SELECT strftime('%Y-%m-01', {col_ts}) as timestamp, {agg_func} as count"
+                    group_by = f"GROUP BY strftime('%Y-%m', {col_ts})"
+            else:
+                # Raw Data
+                select_clause = f"SELECT {col_ts}, {col_count}"
+            
+            from_clause = f"FROM {table}"
+            where_clauses = []
+            params = []
+            
+            if start_dt:
+                where_clauses.append(f"{col_ts} >= ?")
+                params.append(start_dt.isoformat())
+            if end_dt:
+                where_clauses.append(f"{col_ts} <= ?")
+                params.append(end_dt.isoformat())
+                
+            limit_clause = ""
+            order_by = "ORDER BY timestamp ASC"
+            
+            if not start_dt and not end_dt and not unit:
+                lim = limit if limit else 288
+                limit_clause = f"LIMIT {lim}"
+                order_by = "ORDER BY timestamp DESC"
 
-        where_str = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
-        query = f"{select_clause} {from_clause} {where_str} {group_by} {order_by} {limit_clause}"
-        
-        try:
+            where_str = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+            query = f"{select_clause} {from_clause} {where_str} {group_by} {order_by} {limit_clause}"
+            
             rows = conn.execute(query, params).fetchall()
-            conn.close()
             
             results = []
             for row in rows:
@@ -326,14 +311,11 @@ def get_history():
                 
             return jsonify(results)
             
-        except Exception as e:
-            conn.close()
-            return jsonify({"error": str(e)}), 500
-
-    conn.close()
-
-    data = [{"timestamp": row['timestamp'], "count": row['count']} for row in rows]
-    return jsonify(data)
+    except Exception as e:
+        logger.error(f"Error in get_history: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
 
 if __name__ == '__main__':
     # Run the server on port 5000

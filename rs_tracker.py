@@ -1,105 +1,30 @@
 import requests
-import sqlite3
 import datetime
 import time
 import re
 import os
+import logging
 from bs4 import BeautifulSoup
 
-# --- Configuration ---
-# FORCE the DB to be in the same folder as this script
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "osrs_data.db")
-URL = "https://oldschool.runescape.com/"
-SLU_URL = "https://oldschool.runescape.com/slu"
+from config import DB_PATH, OSRS_MAIN_URL, OSRS_SLU_URL, WORLD_SCRAPE_INTERVAL, REQUEST_TIMEOUT, USER_AGENT, SCRAPE_INTERVAL
+from database import init_db
 
-def init_db():
-    """
-    Creates the database and sets it to 'Write-Ahead Logging' (WAL) mode.
-    WAL mode allows you to open/view the database file while the bot is writing to it.
-    """
-    conn = sqlite3.connect(DB_PATH)
-
-    # Enable WAL mode (Crucial for concurrent access)
-    conn.execute("PRAGMA journal_mode=WAL;")
-
-    # Create the table if it doesn't exist
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS players (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp DATETIME,
-            count INTEGER
-        )
-    ''')
-
-    # Create table for locations
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS locations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE
-        )
-    ''')
-
-    # Create table for activities
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS activities (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            description TEXT UNIQUE
-        )
-    ''')
-
-    # Create table for unique world configurations (metadata)
-    # This stores unique combinations of Location + Type + Activity
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS world_details (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            location_id INTEGER,
-            is_f2p BOOLEAN,
-            activity_id INTEGER,
-            UNIQUE(location_id, is_f2p, activity_id),
-            FOREIGN KEY(location_id) REFERENCES locations(id),
-            FOREIGN KEY(activity_id) REFERENCES activities(id)
-        )
-    ''')
-
-    # Create table for scrape events (timestamps)
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS scrape_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp DATETIME UNIQUE
-        )
-    ''')
-
-    # Create table for time-series player counts
-    # Optimization: Use Composite PK and WITHOUT ROWID to save space
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS world_data (
-            scrape_id INTEGER,
-            world_number INTEGER,
-            player_count INTEGER,
-            detail_id INTEGER,
-            PRIMARY KEY (scrape_id, world_number),
-            FOREIGN KEY(scrape_id) REFERENCES scrape_events(id),
-            FOREIGN KEY(detail_id) REFERENCES world_details(id)
-        ) WITHOUT ROWID
-    ''')
-
-    # Create an index on timestamp for fast graphing later
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON players(timestamp);")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_scrape_timestamp ON scrape_events(timestamp);")
-    # Note: idx_world_scrape is redundant because the PK starts with scrape_id
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_world_number ON world_data(world_number);")
-
-    conn.commit()
-    return conn
+# Configure Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("tracker.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 def get_osrs_count():
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        headers = {'User-Agent': USER_AGENT}
         # Timeout ensures the bot doesn't hang forever on a bad connection
-        response = requests.get(URL, headers=headers, timeout=15)
+        response = requests.get(OSRS_MAIN_URL, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
 
         # Find the number in the HTML
@@ -108,16 +33,14 @@ def get_osrs_count():
             return int(match.group(1).replace(',', ''))
 
     except Exception as e:
-        print(f"Error scraping: {e}")
+        logger.error(f"Error scraping total count: {e}")
 
     return None
 
 def get_world_data():
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        response = requests.get(SLU_URL, headers=headers, timeout=15)
+        headers = {'User-Agent': USER_AGENT}
+        response = requests.get(OSRS_SLU_URL, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
 
         soup = BeautifulSoup(response.content, 'html.parser')
@@ -144,9 +67,6 @@ def get_world_data():
             
             # 2. Player Count
             players_text = cells[1].get_text(strip=True) # e.g., "48 players"
-            # Handle "FULL" or other non-numeric cases if they exist, though usually it's "X players"
-            # Sometimes it might be empty or just "players" if 0?
-            # Based on inspection: "0 players" exists.
             player_match = re.search(r"([\d,]+)", players_text)
             player_count = 0
             if player_match:
@@ -173,18 +93,16 @@ def get_world_data():
         return world_rows
 
     except Exception as e:
-        print(f"Error scraping world data: {e}")
+        logger.error(f"Error scraping world data: {e}")
         return []
 
 def main():
     # 1. Initialize Database
     conn = init_db()
-    print(f"Bot started. Saving to: {os.path.abspath(DB_PATH)}")
-    print("Press Ctrl+C to stop.\n")
-
+    logger.info(f"Bot started. Saving to: {os.path.abspath(DB_PATH)}")
+    
     # Track last world scrape time
     last_world_scrape = 0
-    WORLD_SCRAPE_INTERVAL = 1800  
 
     while True:
         try:
@@ -202,26 +120,23 @@ def main():
                 if world_data_list:
                     last_world_scrape = current_ts
             
-            # Store timezone-aware UTC timestamps in ISO 8601 so clients can
-            # reliably parse and convert to the viewer's local timezone.
-            # Use timezone-aware API to avoid DeprecationWarning for utcnow().
+            # Store timezone-aware UTC timestamps in ISO 8601
             current_time = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
             # 3. Save to Database
-            # We use a context manager (with conn:) to handle transactions safely
             with conn:
                 if count:
                     conn.execute(
                         "INSERT INTO players (timestamp, count) VALUES (?, ?)",
                         (current_time, count)
                     )
-                    print(f"[{current_time}] Saved total count: {count:,}")
+                    logger.info(f"[{current_time}] Saved total count: {count:,}")
                 else:
-                    print(f"[{current_time}] Failed to get total count.")
+                    logger.warning(f"[{current_time}] Failed to get total count.")
                 
                 if scrape_worlds:
                     if world_data_list:
-                        print(f"[{current_time}] Saving data for {len(world_data_list)} worlds...")
+                        logger.info(f"[{current_time}] Saving data for {len(world_data_list)} worlds...")
                         
                         # 0. Create Scrape Event
                         cursor = conn.execute("INSERT INTO scrape_events (timestamp) VALUES (?)", (current_time,))
@@ -238,10 +153,8 @@ def main():
                             activity_map[row[0]] = row[1]
 
                         # Cache details (unique combos of loc_id, f2p, activity_id)
-                        # Key: (location_id, is_f2p, activity_id) -> Value: detail_id
                         details_map = {}
                         for row in conn.execute("SELECT location_id, is_f2p, activity_id, id FROM world_details"):
-                            # SQLite returns is_f2p as 0/1, ensure we match types
                             details_map[(row[0], bool(row[1]), row[2])] = row[3]
 
                         data_to_insert = []
@@ -287,20 +200,20 @@ def main():
                             "INSERT INTO world_data (scrape_id, world_number, player_count, detail_id) VALUES (?, ?, ?, ?)",
                             data_to_insert
                         )
-                        print(f"[{current_time}] Saved world data.")
+                        logger.info(f"[{current_time}] Saved world data.")
                     else:
-                        print(f"[{current_time}] Failed to get world data or list empty.")
+                        logger.warning(f"[{current_time}] Failed to get world data or list empty.")
 
         except Exception as e:
-            print(f"Critical Error in loop: {e}")
+            logger.critical(f"Critical Error in loop: {e}")
             # Try to reconnect to DB if something broke the connection
             try:
                 conn = init_db()
             except:
                 pass
 
-        # 4. Wait 5 minutes (300 seconds)
-        time.sleep(300)
+        # 4. Wait for the configured interval
+        time.sleep(SCRAPE_INTERVAL)
 
 if __name__ == "__main__":
     main()

@@ -1,109 +1,101 @@
-**OSRS Player Count**
+# OSRS Player Count Tracker
 
-Simple scraper and Flask API that records Old School RuneScape (OSRS) online player counts to a local SQLite database and serves the data via a small web API and frontend.
+**Live Site:** [www.osrsplayercount.com](https://www.osrsplayercount.com)
 
-**Overview**
+A comprehensive tool to track, store, and visualize Old School RuneScape (OSRS) player populations. It scrapes data from the OSRS homepage and the official server list, storing it in a local SQLite database, and serves it via a Flask API with a modern, interactive frontend.
 
-- **Purpose**: Scrape the OSRS homepage for player count, save time-stamped samples to `osrs_data.db`, and serve the latest and history via a Flask API and simple web UI in `templates/index.html`.
-- **Main files**: `osrs_api.py` (Flask web server), `rs_tracker.py` (scraper / data writer), `requirements.txt` (dependencies), `templates/index.html` (frontend).
+## Features
 
-**Requirements**
-- **Python**: 3.8+
-- **Dependencies**: See `requirements.txt` in the project root. Key packages are `flask`, `flask-cors`, and `requests`.
+*   **Global Player Count**: Tracks the total number of players online.
+*   **World-Level Tracking**: Records population for every individual world.
+*   **Detailed Metrics**: Captures world location, activity (minigames/skills), and type (F2P/Members).
+*   **Interactive Dashboard**:
+    *   Real-time player count display.
+    *   Historical graphs with zoom and pan capabilities.
+    *   **Advanced Filtering**: Filter history by World, Region (Location), or World Type (F2P/Members).
+    *   **Comparison Mode**: Compare F2P vs Members, or compare different Regions side-by-side.
 
-**Installation**
-- Create a virtual environment and install dependencies.
+## Requirements
 
-PowerShell example:
+*   **Python**: 3.8+
+*   **Dependencies**: `flask`, `flask-cors`, `requests`, `beautifulsoup4`
+
+## Installation
+
+1.  **Clone the repository** (or download the source).
+2.  **Create a virtual environment**:
+    ```powershell
+    python -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+    ```
+3.  **Install dependencies**:
+    ```powershell
+    pip install -r requirements.txt
+    ```
+
+## Configuration
+
+All configurable settings are located in `config.py`. You can adjust:
+
+*   `SCRAPE_INTERVAL`: How often the global player count is checked (default: 300s / 5 mins).
+*   `WORLD_SCRAPE_INTERVAL`: How often detailed world data is scraped (default: 1800s / 30 mins).
+*   `REQUEST_TIMEOUT`: Timeout for network requests.
+*   `DB_NAME`: Name of the SQLite database file.
+
+## Usage
+
+### 1. Start the Tracker
+The tracker runs in the background, scraping data and saving it to `osrs_data.db`.
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r c:\git\osrsplayercount\osrsplayercount\requirements.txt
+python rs_tracker.py
 ```
+*   *Note: The database will be automatically created if it doesn't exist.*
 
-Adjust the path to `requirements.txt` if you open a different working directory.
-
-**Running the API server (development)**
-- The API serves the web UI and endpoints:
-  - `GET /api/latest` — returns the most recent sample
-  - `GET /api/history?limit=288` — returns historical samples (default 288)
-
-PowerShell:
+### 2. Start the Web Server
+The API serves the dashboard and provides data endpoints.
 
 ```powershell
-python c:\git\osrsplayercount\osrsplayercount\osrs_api.py
+python osrs_api.py
 ```
+*   Access the dashboard at: **http://127.0.0.1:5000**
 
-The server runs by default on `http://127.0.0.1:5000` when launched directly.
+## API Documentation
 
-**API Documentation**
-
-- `GET /api/latest`
-  - Returns the most recent single sample.
-  - Response (application/json):
+### `GET /api/latest`
+Returns the most recent global snapshot.
+*   **Response**:
     ```json
-    { "timestamp": "2025-12-02T12:00:00Z", "count": 12345 }
-    ```
-  - The frontend formats this timestamp into the user's local timezone for display.
-
-- `GET /api/history`
-  - Returns an array of samples for plotting or analysis.
-  - Query parameters (optional):
-    - `limit` (int): return the last `limit` raw rows when no `start`/`end` provided (default used when omitted is 288).
-    - `start` (ISO datetime string): include rows with `timestamp >= start` (example: `2025-12-01T00:00:00Z`).
-    - `end` (ISO datetime string): include rows with `timestamp <= end`.
-    - `unit` (string): aggregation unit, one of `minute`, `hour`, `day`. When provided the server aggregates points into buckets for that unit.
-    - `step` (int): when used with `unit=minute`, bucket size in minutes (e.g. `5`, `15`, `30`). Note: minute-level queries are limited to a maximum span of 1 day.
-
-  - Behavior:
-    - If `unit=minute` and `step` provided the server aggregates into `step`-minute buckets and returns one point per bucket (timestamp is ISO UTC, count is rounded average).
-    - If `unit` is `hour` or `day` the server aggregates accordingly.
-    - If no aggregation params are provided the endpoint returns raw rows between `start`/`end` (if given) or the last `limit` rows.
-
-  - Response example (raw rows):
-    ```json
-    [
-      { "timestamp": "2025-12-01T00:00:00Z", "count": 12300 },
-      { "timestamp": "2025-12-01T00:05:00Z", "count": 12250 },
-      ...
-    ]
+    {
+        "timestamp": "2025-12-04T12:00:00Z",
+        "count": 125000,
+        "f2p_count": 45000,
+        "members_count": 80000
+    }
     ```
 
-  - Aggregation example (15-minute buckets):
-    ```shell
-    curl 'http://127.0.0.1:5000/api/history?start=2025-12-01T00:00:00Z&end=2025-12-02T00:00:00Z&unit=minute&step=15'
-    ```
+### `GET /api/metadata`
+Returns available filters for the frontend.
+*   **Response**: Lists of all tracked `worlds`, `locations`, and `activities`.
 
-  - The server will return HTTP 400 for invalid or disallowed requests (for example, requesting minute-level aggregation for a span > 1 day). Error responses are JSON with an `error` message.
+### `GET /api/history`
+Returns historical data points for graphing.
+*   **Parameters**:
+    *   `start` / `end`: ISO timestamps to define the range.
+    *   `limit`: Number of points to return (if no range specified).
+    *   `unit` / `step`: For data aggregation (e.g., `unit=minute`, `step=15`).
+    *   **Filters**:
+        *   `world_id`: Filter by specific world number.
+        *   `location_id`: Filter by region ID.
+        *   `is_f2p`: `1` for F2P, `0` for Members.
 
-  - Response format for errors:
-    ```json
-    { "error": "Minute-level queries are limited to a maximum span of 1 day." }
-    ```
+## License
 
-**Running the tracker (scraper)**
-- `rs_tracker.py` scrapes the OSRS homepage and appends samples to `osrs_data.db`. It includes a built-in database initializer.
-
-PowerShell:
-
-```powershell
-python c:\git\osrsplayercount\osrsplayercount\rs_tracker.py
-```
-
-The tracker runs continuously and sleeps 5 minutes between scrapes. Press Ctrl+C to stop.
-
-**Database**
-- The SQLite database file is `osrs_data.db` and is created next to the scripts. The table `players` contains `id`, `timestamp`, and `count`.
-- The tracker enables WAL journal mode so the DB can be read while the tracker writes.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 **Configuration / Paths**
 - Both scripts compute `BASE_DIR` using `__file__` and place `osrs_data.db` in the same directory as the scripts. If you move files, update the paths accordingly, or run the scripts from their directory.
 
 **Development**
 - Lint / format with your preferred tools. Tests are not included in this repository.
-
-**License**
-- This repository contains no license file. Add one if you intend to publish.
 ---
