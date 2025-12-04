@@ -598,7 +598,7 @@
 
         // Easter Egg: Gnome Child Scroll
         let scrollCount = 0;
-        const SCROLL_THRESHOLD = 20; // Number of scroll events to trigger
+        const SCROLL_THRESHOLD = 50; // Number of scroll events to trigger
 
         function handleWheel(e) {
             const gnome = document.getElementById('gnome-child');
@@ -638,7 +638,7 @@
         // Mobile Touch Support
         let touchStartY = 0;
         let touchScrollDistance = 0;
-        const TOUCH_THRESHOLD = 150; // Pixels
+        const TOUCH_THRESHOLD = 400; // Pixels
 
         window.addEventListener('touchstart', (e) => {
             touchStartY = e.touches[0].clientY;
