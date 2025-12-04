@@ -85,9 +85,71 @@
         .info:hover .tooltip {
             display: block;
         }
+        /* Easter Egg: Connection Lost */
+        #connection-lost {
+            display: none;
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background-color: #000;
+            border: 2px solid #5d5d5d;
+            padding: 10px 15px;
+            z-index: 9999;
+            font-family: sans-serif;
+            font-weight: bold;
+            box-shadow: 2px 2px 0px #000;
+            text-align: left;
+            width: 220px;
+        }
+        #connection-lost .title {
+            color: #ffff00;
+            font-size: 1.1em;
+            margin-bottom: 4px;
+        }
+        #connection-lost .message {
+            color: #ffffff;
+            font-size: 0.9em;
+        }
+        /* Easter Egg: Gnome Child */
+        #gnome-child {
+            position: fixed;
+            bottom: -150px;
+            right: 20px;
+            width: 100px;
+            transition: bottom 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 9998;
+            pointer-events: none;
+        }
+        #gnome-child.peeking {
+            bottom: 0;
+        }
+        /* Easter Egg: Dragon Scimitar Cursor Toggle */
+        body.dragon-cursor, body.dragon-cursor * {
+            cursor: url('https://oldschool.runescape.wiki/images/Dragon_scimitar.png?36084'), auto !important;
+        }
+        #scimitar-toggle {
+            width: 32px;
+            height: 32px;
+            cursor: pointer;
+            vertical-align: middle;
+            margin-left: 10px;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+        #scimitar-toggle:hover {
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
+
+    <div id="connection-lost">
+        <div class="title">Connection Lost</div>
+        <div class="message">Please wait - attempting to reestablish</div>
+    </div>
+
+    <!-- Easter Egg: Gnome Child -->
+    <img id="gnome-child" src="https://oldschool.runescape.wiki/images/Gnome_child_chathead.png?c099b" alt="Gnome Child">
 
     <div class="container">
         <div class="card">
@@ -523,12 +585,101 @@
 
         // Run initialize on page load
         window.addEventListener('DOMContentLoaded', initializePage);
+
+        // Easter Egg: Dragon Scimitar Cursor Toggle
+        document.addEventListener('DOMContentLoaded', function() {
+            const toggle = document.getElementById('scimitar-toggle');
+            if (toggle) {
+                toggle.addEventListener('click', function() {
+                    document.body.classList.toggle('dragon-cursor');
+                });
+            }
+        });
+
+        // Easter Egg: Gnome Child Scroll
+        let scrollCount = 0;
+        const SCROLL_THRESHOLD = 20; // Number of scroll events to trigger
+
+        function checkGnome(e) {
+            const gnome = document.getElementById('gnome-child');
+            
+            // If page is scrollable, use bottom detection
+            if (document.documentElement.scrollHeight > window.innerHeight) {
+                const scrollPosition = window.innerHeight + window.scrollY;
+                const bodyHeight = document.documentElement.scrollHeight;
+                if (scrollPosition >= bodyHeight - 15) {
+                    gnome.classList.add('peeking');
+                } else {
+                    gnome.classList.remove('peeking');
+                }
+            } else {
+                // If page is not scrollable, count scroll attempts
+                if (e.deltaY > 0) { // Scrolling down
+                    scrollCount++;
+                    if (scrollCount > SCROLL_THRESHOLD) {
+                        gnome.classList.add('peeking');
+                    }
+                } else if (e.deltaY < 0) { // Scrolling up
+                    scrollCount = Math.max(0, scrollCount - 1);
+                    if (scrollCount < SCROLL_THRESHOLD) {
+                        gnome.classList.remove('peeking');
+                    }
+                }
+            }
+        }
+        
+        window.addEventListener('scroll', () => {
+            // Reset scroll count if actual scrolling happens (handled by scroll event logic above if needed, 
+            // but here we just ensure standard behavior works)
+            if (document.documentElement.scrollHeight > window.innerHeight) {
+                const gnome = document.getElementById('gnome-child');
+                const scrollPosition = window.innerHeight + window.scrollY;
+                const bodyHeight = document.documentElement.scrollHeight;
+                if (scrollPosition >= bodyHeight - 15) {
+                    gnome.classList.add('peeking');
+                } else {
+                    gnome.classList.remove('peeking');
+                }
+            }
+        });
+
+        // Listen for wheel events to catch scrolling even when page doesn't move
+        window.addEventListener('wheel', checkGnome);
+        
+        // Check initially
+        setTimeout(() => {
+            if (document.documentElement.scrollHeight > window.innerHeight) {
+                 // Standard check for scrollable pages
+                 const gnome = document.getElementById('gnome-child');
+                 if ((window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 15) {
+                     gnome.classList.add('peeking');
+                 }
+            }
+        }, 1000); 
+
+        // Easter Egg: Konami Code
+        const konamiCode = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
+        let konamiIndex = 0;
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === konamiCode[konamiIndex]) {
+                konamiIndex++;
+                if (konamiIndex === konamiCode.length) {
+                    const el = document.getElementById('connection-lost');
+                    el.style.display = 'block';
+                    setTimeout(() => { el.style.display = 'none'; }, 5000);
+                    konamiIndex = 0;
+                }
+            } else {
+                konamiIndex = 0;
+            }
+        });
     </script>
-</script>
 
     <footer class="site-footer">
         <div class="container">
             <a href="https://github.com/UsefulEndymion/osrsplayercount" target="_blank" rel="noopener noreferrer">View/Contribute on GitHub</a>
+            <img id="scimitar-toggle" src="https://oldschool.runescape.wiki/images/Dragon_scimitar.png?36084" alt="Toggle Dragon Scimitar Cursor" title="Toggle Dragon Scimitar Cursor">
         </div>
     </footer>
 
