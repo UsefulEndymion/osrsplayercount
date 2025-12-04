@@ -1,0 +1,206 @@
+@font-face {
+    font-family: 'RuneScape';
+    src: url('https://raw.githubusercontent.com/runelite/runelite/master/runelite-client/src/main/resources/net/runelite/client/ui/runescape.ttf');
+}
+body {
+    font-family: 'RuneScape', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #1b1b1b;
+    background-image: repeating-linear-gradient(45deg, #2b2b2b 0, #2b2b2b 1px, #1b1b1b 0, #1b1b1b 50%);
+    color: #ffff00;
+    text-shadow: 1px 1px 0 #000;
+    text-align: center;
+    padding: 20px;
+}
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+}
+.card {
+    background-color: #5b4a3c;
+    padding: 20px;
+    border: 3px solid #383023;
+    border-radius: 4px;
+    box-shadow: inset 2px 2px 5px rgba(0,0,0,0.5), 2px 2px 5px rgba(0,0,0,0.5);
+    margin-bottom: 20px;
+    color: #ffff00;
+}
+h1 { 
+    margin-top: 0; 
+    color: #ff981f;
+    text-shadow: 2px 2px 0 #000;
+    font-size: 2.5em;
+}
+.big-number {
+    font-size: 3em;
+    font-weight: bold;
+    color: #00ff00;
+    text-shadow: 2px 2px 0 #000;
+}
+.timestamp { color: #d4d4d4; font-size: 0.9em; text-shadow: 1px 1px 0 #000; }
+canvas { max-height: 400px; }
+.site-footer {
+    margin-top: 18px;
+    font-size: 0.9em;
+    color: #999;
+    text-align: center;
+}
+.site-footer a {
+    color: #90c040;
+    text-decoration: none;
+}
+.site-footer a:hover {
+    color: #ffffff;
+    text-decoration: underline;
+}
+
+/* GitHub Link Tooltip */
+.github-link {
+    position: relative;
+    display: inline-block;
+}
+.github-link .tooltip {
+    display: none;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 100%; /* Show above */
+    margin-bottom: 8px;
+    background: #5b4a3c;
+    color: #ffff00;
+    padding: 6px 8px;
+    border: 2px solid #383023;
+    white-space: nowrap;
+    font-size: 0.9em;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+    z-index: 30;
+    text-shadow: 1px 1px 0 #000;
+    pointer-events: none;
+}
+.github-link:hover .tooltip {
+    display: block;
+}
+
+/* OSRS Controls */
+button {
+    background: #5b4a3c;
+    color: #ffff00;
+    border: 2px solid #383023;
+    padding: 5px 10px;
+    font-family: 'RuneScape', sans-serif;
+    cursor: pointer;
+    box-shadow: inset 1px 1px 0 rgba(255,255,255,0.1);
+    text-shadow: 1px 1px 0 #000;
+}
+button:hover {
+    background: #6d5a48;
+    color: #ffffff;
+}
+select, input {
+    background: #2b231a;
+    color: #ffff00;
+    border: 1px solid #5b4a3c;
+    padding: 4px;
+    font-family: 'RuneScape', sans-serif;
+}
+
+/* Override inline styles for labels */
+label[style*="color:#bdbdbd"] {
+    color: #ff981f !important;
+    text-shadow: 1px 1px 0 #000;
+}
+/* Also update the spinner and about text */
+#loadingSpinner, #about-app, #about-app div {
+    color: #d4d4d4 !important;
+    text-shadow: 1px 1px 0 #000;
+}
+/* Tooltip for granularity info */
+.info {
+    position: relative;
+    display: inline-block;
+    vertical-align: middle;
+    margin-left: 6px;
+}
+.info-icon {
+    background: #383023;
+    border-radius: 50%;
+    padding: 2px 6px;
+    border: 1px solid #5b4a3c;
+    color: #ffff00;
+    font-weight: 600;
+    font-size: 0.85em;
+    line-height: 1;
+    cursor: help;
+}
+.info .tooltip {
+    display: none;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: calc(100% + 8px);
+    background: #5b4a3c;
+    color: #ffff00;
+    padding: 6px 8px;
+    border: 2px solid #383023;
+    border-radius: 0;
+    white-space: nowrap;
+    font-size: 0.85em;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+    z-index: 30;
+    text-shadow: 1px 1px 0 #000;
+}
+.info:hover .tooltip {
+    display: block;
+}
+/* Easter Egg: Connection Lost */
+#connection-lost {
+    display: none;
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    background-color: #000;
+    border: 2px solid #ffffff;
+    padding: 10px 15px;
+    z-index: 9999;
+    font-family: 'RuneScape', sans-serif;
+    box-shadow: 2px 2px 0px #000;
+    text-align: center;
+    width: 250px;
+}
+#connection-lost .title {
+    color: #ffffff;
+    font-size: 1.2em;
+    margin-bottom: 4px;
+}
+#connection-lost .message {
+    color: #ffffff;
+    font-size: 1em;
+}
+/* Easter Egg: Gnome Child */
+#gnome-child {
+    position: fixed;
+    bottom: -150px;
+    right: 20px;
+    width: 100px;
+    transition: bottom 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    z-index: 9998;
+    pointer-events: none;
+}
+#gnome-child.peeking {
+    bottom: 0;
+}
+/* Easter Egg: Dragon Scimitar Cursor Toggle */
+body.dragon-cursor, body.dragon-cursor * {
+    cursor: url('https://oldschool.runescape.wiki/images/Dragon_scimitar.png?36084'), auto !important;
+}
+#scimitar-toggle {
+    width: 32px;
+    height: 32px;
+    cursor: pointer;
+    vertical-align: middle;
+    margin-left: 10px;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+#scimitar-toggle:hover {
+    opacity: 1;
+}
