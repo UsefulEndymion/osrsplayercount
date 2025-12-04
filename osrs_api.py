@@ -2,6 +2,7 @@ from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
 import sqlite3
 import os
+from datetime import datetime, timedelta, timezone
 
 # --- PATH CONFIGURATION ---
 # We need absolute paths for PythonAnywhere
@@ -198,11 +199,8 @@ def get_history():
             rows = rows[::-1]  # reverse chronological order
 
     conn.close()
-    
-    # Convert database rows to a clean list of dictionaries
-    # We reverse it ([::-1]) so the graph draws from Left (old) to Right (new)
-    data = [{"timestamp": row['timestamp'], "count": row['count']} for row in rows][::-1]
-    
+
+    data = [{"timestamp": row['timestamp'], "count": row['count']} for row in rows]
     return jsonify(data)
 
 if __name__ == '__main__':
