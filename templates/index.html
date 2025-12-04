@@ -275,6 +275,7 @@
                 <div style="display:flex; gap:6px; margin-left:8px; align-items:center;">
                     <label style="font-size:0.9em; color:#bdbdbd;">Range:
                         <select id="presetSelect">
+                            <option value="custom" disabled hidden>Custom</option>
                             <option value="3h">Last 3h</option>
                             <option value="6h">Last 6h</option>
                             <option value="12h">Last 12h</option>
@@ -632,6 +633,23 @@
             document.getElementById('endInput').value = toLocalInputISO(end);
         }
 
+        function applyPreset(v) {
+            switch (v) {
+                case '3h': setPresetHours(3); break;
+                case '6h': setPresetHours(6); break;
+                case '12h': setPresetHours(12); break;
+                case '24h': setPresetHours(24); break;
+                case '7d': setPresetHours(24*7); break;
+                case '30d': setPresetHours(24*30); break;
+                case '6m': setPresetMonths(6); break;
+                case '1y': setPresetYears(1); break;
+                case '5y': setPresetYears(5); break;
+                case '10y': setPresetYears(10); break;
+            }
+            updateGranularityAvailability();
+            updateFromInputs();
+        }
+
         // Initialize page: set default inputs and render
         async function initializePage() {
             // Default to last 7d with hour granularity
@@ -647,33 +665,33 @@
                 // set default preset to Last 7d
                 presetEl.value = '7d';
                 presetEl.addEventListener('change', () => {
-                    const v = presetEl.value;
-                    switch (v) {
-                        case '3h': setPresetHours(3); break;
-                        case '6h': setPresetHours(6); break;
-                        case '12h': setPresetHours(12); break;
-                        case '24h': setPresetHours(24); break;
-                        case '7d': setPresetHours(24*7); break;
-                        case '30d': setPresetHours(24*30); break;
-                        case '6m': setPresetMonths(6); break;
-                        case '1y': setPresetYears(1); break;
-                        case '5y': setPresetYears(5); break;
-                        case '10y': setPresetYears(10); break;
-                    }
-                    updateGranularityAvailability();
-                    updateFromInputs();
+                    applyPreset(presetEl.value);
                 });
             }
             document.getElementById('granularitySelect').addEventListener('change', updateFromInputs);
             document.getElementById('aggregationSelect').addEventListener('change', updateFromInputs);
             document.getElementById('resetZoomBtn').addEventListener('click', () => { if (populationChart) populationChart.resetZoom(); });
+            
             // Recalculate availability when user edits start/end inputs
-            document.getElementById('startInput').addEventListener('change', updateGranularityAvailability);
-            document.getElementById('endInput').addEventListener('change', updateGranularityAvailability);
+            const onInputChange = () => {
+                updateGranularityAvailability();
+                if (presetEl) presetEl.value = 'custom';
+            };
+            document.getElementById('startInput').addEventListener('change', onInputChange);
+            document.getElementById('endInput').addEventListener('change', onInputChange);
 
             // Initial fetch and render
             await fetchLatest();
             await updateFromInputs();
+
+            // Auto-refresh every 2 minutes
+            setInterval(async () => {
+                await fetchLatest();
+                // If we are on a preset (not custom), refresh the chart range to keep it "live"
+                if (presetEl && presetEl.value !== 'custom') {
+                    applyPreset(presetEl.value);
+                }
+            }, 2 * 60 * 1000);
         }
 
         // Run initialize on page load
@@ -789,6 +807,15 @@
             <img id="scimitar-toggle" src="https://oldschool.runescape.wiki/images/Dragon_scimitar.png?36084" alt="Toggle Dragon Scimitar Cursor" title="Toggle Dragon Scimitar Cursor">
         </div>
     </footer>
+
+    <script>
+        // Easter Egg: Play sound after 20 minutes
+        setTimeout(() => {
+            const audio = new Audio('https://oldschool.runescape.wiki/images/Armadyl_Eye_sound.ogg?37997');
+            audio.volume = 0.5;
+            audio.play().catch(e => console.error("Audio play failed (autoplay policy?):", e));
+        }, 60 * 60 * 1000);
+    </script>
 
 </body>
 </html>
