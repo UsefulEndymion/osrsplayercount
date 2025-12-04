@@ -29,16 +29,52 @@ def home():
 
 @app.route('/api/latest')
 def get_latest():
-    """Returns the most recent single data point."""
+    """Returns the most recent single data point with F2P/Members breakdown."""
     conn = get_db_connection()
-    # Get the last row added
+    # Get the last row added to players (global count)
     row = conn.execute('SELECT * FROM players ORDER BY id DESC LIMIT 1').fetchone()
+    
+    f2p_count = 0
+    members_count = 0
+    
+    if row:
+        # Try to get breakdown from world_data if available for this timestamp
+        # We find the scrape_event that matches the timestamp (approx) or just the latest scrape_event
+        # Since players and scrape_events are populated together, the latest scrape_event should correspond.
+        
+        try:
+            latest_scrape = conn.execute('SELECT id FROM scrape_events ORDER BY timestamp DESC LIMIT 1').fetchone()
+            if latest_scrape:
+                scrape_id = latest_scrape['id']
+                
+                # Calculate F2P count
+                f2p_res = conn.execute('''
+                    SELECT SUM(wd.player_count) as count 
+                    FROM world_data wd 
+                    JOIN world_details det ON wd.detail_id = det.id 
+                    WHERE wd.scrape_id = ? AND det.is_f2p = 1
+                ''', (scrape_id,)).fetchone()
+                f2p_count = f2p_res['count'] if f2p_res and f2p_res['count'] else 0
+                
+                # Calculate Members count
+                mem_res = conn.execute('''
+                    SELECT SUM(wd.player_count) as count 
+                    FROM world_data wd 
+                    JOIN world_details det ON wd.detail_id = det.id 
+                    WHERE wd.scrape_id = ? AND det.is_f2p = 0
+                ''', (scrape_id,)).fetchone()
+                members_count = mem_res['count'] if mem_res and mem_res['count'] else 0
+        except Exception as e:
+            print(f"Error fetching breakdown: {e}")
+
     conn.close()
     
     if row:
         return jsonify({
             "timestamp": row['timestamp'],
-            "count": row['count']
+            "count": row['count'],
+            "f2p_count": f2p_count,
+            "members_count": members_count
         })
     else:
         return jsonify({"error": "No data found"}), 404
@@ -175,13 +211,14 @@ def get_history():
             select_clause += ", SUM(wd.player_count) as count"
             group_by = "GROUP BY se.id" # Group by scrape event
             
-            if location_id is not None:
-                where_clauses.append("det.location_id = ?")
-                params.append(location_id)
-            
-            if is_f2p is not None:
-                where_clauses.append("det.is_f2p = ?")
-                params.append(is_f2p)
+        # Apply Location/F2P filters (applies to both specific world and aggregated queries)
+        if location_id is not None:
+            where_clauses.append("det.location_id = ?")
+            params.append(location_id)
+        
+        if is_f2p is not None:
+            where_clauses.append("det.is_f2p = ?")
+            params.append(is_f2p)
 
         # Time Filters
         if start_dt:
