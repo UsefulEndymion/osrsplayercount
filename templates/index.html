@@ -600,50 +600,39 @@
         let scrollCount = 0;
         const SCROLL_THRESHOLD = 20; // Number of scroll events to trigger
 
-        function checkGnome(e) {
+        function handleWheel(e) {
             const gnome = document.getElementById('gnome-child');
+            // Check if we are at the bottom (or page is not scrollable)
+            const isAtBottom = (window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 10;
             
-            if (e.deltaY > 0) { // Scrolling down
-                scrollCount++;
-                if (scrollCount > SCROLL_THRESHOLD) {
-                    gnome.classList.add('peeking');
-                }
-            } else if (e.deltaY < 0) { // Scrolling up
-                scrollCount = Math.max(0, scrollCount - 1);
-                if (scrollCount < SCROLL_THRESHOLD) {
+            if (isAtBottom) {
+                if (e.deltaY > 0) { // Scrolling down while at bottom
+                    scrollCount++;
+                    if (scrollCount > SCROLL_THRESHOLD) {
+                        gnome.classList.add('peeking');
+                    }
+                } else { // Scrolling up
+                    scrollCount = 0;
                     gnome.classList.remove('peeking');
                 }
+            } else {
+                scrollCount = 0;
+                gnome.classList.remove('peeking');
             }
         }
         
+        // Reset if user scrolls away using scrollbar
         window.addEventListener('scroll', () => {
-            // Reset scroll count if actual scrolling happens (handled by scroll event logic above if needed, 
-            // but here we just ensure standard behavior works)
-            if (document.documentElement.scrollHeight > window.innerHeight) {
-                const gnome = document.getElementById('gnome-child');
-                const scrollPosition = window.innerHeight + window.scrollY;
-                const bodyHeight = document.documentElement.scrollHeight;
-                if (scrollPosition >= bodyHeight - 15) {
-                    gnome.classList.add('peeking');
-                } else {
-                    gnome.classList.remove('peeking');
-                }
+            const gnome = document.getElementById('gnome-child');
+            const isAtBottom = (window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 10;
+            if (!isAtBottom) {
+                scrollCount = 0;
+                gnome.classList.remove('peeking');
             }
         });
 
         // Listen for wheel events to catch scrolling even when page doesn't move
-        window.addEventListener('wheel', checkGnome);
-        
-        // Check initially
-        setTimeout(() => {
-            if (document.documentElement.scrollHeight > window.innerHeight) {
-                 // Standard check for scrollable pages
-                 const gnome = document.getElementById('gnome-child');
-                 if ((window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 15) {
-                     gnome.classList.add('peeking');
-                 }
-            }
-        }, 1000); 
+        window.addEventListener('wheel', handleWheel); 
 
         // Easter Egg: Konami Code
         const konamiCode = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
