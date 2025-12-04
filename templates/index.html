@@ -627,12 +627,46 @@
             const isAtBottom = (window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 10;
             if (!isAtBottom) {
                 scrollCount = 0;
+                touchScrollDistance = 0;
                 gnome.classList.remove('peeking');
             }
         });
 
         // Listen for wheel events to catch scrolling even when page doesn't move
-        window.addEventListener('wheel', handleWheel); 
+        window.addEventListener('wheel', handleWheel);
+
+        // Mobile Touch Support
+        let touchStartY = 0;
+        let touchScrollDistance = 0;
+        const TOUCH_THRESHOLD = 150; // Pixels
+
+        window.addEventListener('touchstart', (e) => {
+            touchStartY = e.touches[0].clientY;
+        }, { passive: true });
+
+        window.addEventListener('touchmove', (e) => {
+            const gnome = document.getElementById('gnome-child');
+            const currentY = e.touches[0].clientY;
+            const deltaY = touchStartY - currentY;
+            touchStartY = currentY;
+
+            const isAtBottom = (window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 10;
+
+            if (isAtBottom) {
+                if (deltaY > 0) {
+                    touchScrollDistance += deltaY;
+                    if (touchScrollDistance > TOUCH_THRESHOLD) {
+                        gnome.classList.add('peeking');
+                    }
+                } else if (deltaY < -2) { // Small buffer for jitter
+                    touchScrollDistance = 0;
+                    gnome.classList.remove('peeking');
+                }
+            } else {
+                touchScrollDistance = 0;
+                gnome.classList.remove('peeking');
+            }
+        }, { passive: true }); 
 
         // Easter Egg: Konami Code
         const konamiCode = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
