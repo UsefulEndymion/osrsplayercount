@@ -165,8 +165,8 @@
                         <option value="5m">5 min</option>
                         <option value="15m">15 min</option>
                         <option value="30m">30 min</option>
-                        <option value="hour">Hour</option>
-                        <option value="day" selected>Day</option>
+                        <option value="hour" selected>Hour</option>
+                        <option value="day">Day</option>
                         <option value="week">Week</option>
                         <option value="month">Month</option>
                     </select>
@@ -192,8 +192,8 @@
                             <option value="3h">Last 3h</option>
                             <option value="6h">Last 6h</option>
                             <option value="12h">Last 12h</option>
-                            <option value="24h" selected>Last 24h</option>
-                            <option value="7d">Last 7d</option>
+                            <option value="24h">Last 24h</option>
+                            <option value="7d" selected>Last 7d</option>
                             <option value="30d">Last 30d</option>
                             <option value="6m">Last 6m</option>
                             <option value="1y">Last 1y</option>
@@ -542,9 +542,9 @@
 
         // Initialize page: set default inputs and render
         async function initializePage() {
-            // Default to last 24h with 15-minute granularity
-            setPresetHours(24);
-            document.getElementById('granularitySelect').value = '15m';
+            // Default to last 7d with hour granularity
+            setPresetHours(24 * 7);
+            document.getElementById('granularitySelect').value = 'hour';
             // Ensure minute options availability reflects the default range
             updateGranularityAvailability();
 
@@ -552,8 +552,8 @@
             document.getElementById('applyRangeBtn').addEventListener('click', updateFromInputs);
             const presetEl = document.getElementById('presetSelect');
             if (presetEl) {
-                // set default preset to Last 24h
-                presetEl.value = '24h';
+                // set default preset to Last 7d
+                presetEl.value = '7d';
                 presetEl.addEventListener('change', () => {
                     const v = presetEl.value;
                     switch (v) {
