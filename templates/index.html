@@ -603,27 +603,15 @@
         function checkGnome(e) {
             const gnome = document.getElementById('gnome-child');
             
-            // If page is scrollable, use bottom detection
-            if (document.documentElement.scrollHeight > window.innerHeight) {
-                const scrollPosition = window.innerHeight + window.scrollY;
-                const bodyHeight = document.documentElement.scrollHeight;
-                if (scrollPosition >= bodyHeight - 15) {
+            if (e.deltaY > 0) { // Scrolling down
+                scrollCount++;
+                if (scrollCount > SCROLL_THRESHOLD) {
                     gnome.classList.add('peeking');
-                } else {
-                    gnome.classList.remove('peeking');
                 }
-            } else {
-                // If page is not scrollable, count scroll attempts
-                if (e.deltaY > 0) { // Scrolling down
-                    scrollCount++;
-                    if (scrollCount > SCROLL_THRESHOLD) {
-                        gnome.classList.add('peeking');
-                    }
-                } else if (e.deltaY < 0) { // Scrolling up
-                    scrollCount = Math.max(0, scrollCount - 1);
-                    if (scrollCount < SCROLL_THRESHOLD) {
-                        gnome.classList.remove('peeking');
-                    }
+            } else if (e.deltaY < 0) { // Scrolling up
+                scrollCount = Math.max(0, scrollCount - 1);
+                if (scrollCount < SCROLL_THRESHOLD) {
+                    gnome.classList.remove('peeking');
                 }
             }
         }
