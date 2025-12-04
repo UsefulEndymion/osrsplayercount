@@ -19,3 +19,7 @@ osrs_data.db-wal
 
 # Logs and misc
 *.log
+
+# Python
+__pycache__/
+*.pyc
