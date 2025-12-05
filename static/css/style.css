@@ -100,7 +100,8 @@ button {
     background: #5b4a3c;
     color: #ffff00;
     border: 2px solid #383023;
-    padding: 5px 10px;
+    padding: 0.4em 0.8em;
+    font-size: 1em;
     font-family: 'RuneScape', sans-serif;
     cursor: pointer;
     box-shadow: inset 1px 1px 0 rgba(255,255,255,0.1);
@@ -114,8 +115,20 @@ select, input {
     background: #2b231a;
     color: #ffff00;
     border: 1px solid #5b4a3c;
-    padding: 4px;
+    padding: 0.4em;
+    font-size: 1em;
     font-family: 'RuneScape', sans-serif;
+}
+
+/* High resolution scaling for controls */
+@media (min-width: 1921px) {
+    button, select, input {
+        font-size: 1.2em;
+        padding: 0.5em 1em;
+    }
+    select, input {
+        padding: 0.5em;
+    }
 }
 
 /* Override inline styles for labels */
