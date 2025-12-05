@@ -12,32 +12,33 @@ body {
     padding: 20px;
 }
 .container {
-    max-width: 800px;
+    max-width: 1400px;
     margin: 0 auto;
 }
 .card {
     background-color: #5b4a3c;
-    padding: 20px;
+    padding: 10px;
     border: 3px solid #383023;
     border-radius: 4px;
     box-shadow: inset 2px 2px 5px rgba(0,0,0,0.5), 2px 2px 5px rgba(0,0,0,0.5);
-    margin-bottom: 20px;
+    margin-bottom: 15px;
     color: #ffff00;
 }
 h1 { 
-    margin-top: 0; 
+    margin-top: 0;
+    margin-bottom: 5px;
     color: #ff981f;
     text-shadow: 2px 2px 0 #000;
-    font-size: 2.5em;
+    font-size: 1.5em;
 }
 .big-number {
-    font-size: 3em;
+    font-size: 2em;
     font-weight: bold;
     color: #00ff00;
     text-shadow: 2px 2px 0 #000;
 }
 .timestamp { color: #d4d4d4; font-size: 0.9em; text-shadow: 1px 1px 0 #000; }
-canvas { max-height: 400px; }
+canvas { max-height: 440px; }
 .site-footer {
     margin-top: 18px;
     font-size: 0.9em;
