@@ -50,7 +50,7 @@ h1 {
 }
 .timestamp { color: #d4d4d4; font-size: 0.9em; text-shadow: 1px 1px 0 #000; }
 canvas { 
-    max-height: 60vh; 
+    max-height: 40vh; 
     width: 100% !important;
 }
 .site-footer {
