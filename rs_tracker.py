@@ -68,9 +68,12 @@ def get_world_data():
             # 2. Player Count
             players_text = cells[1].get_text(strip=True) # e.g., "48 players"
             player_match = re.search(r"([\d,]+)", players_text)
-            player_count = 0
+            
             if player_match:
                 player_count = int(player_match.group(1).replace(',', ''))
+            else:
+                # If no number is found, it means the world is full (2000 players)
+                player_count = 2000
             
             # 3. Location
             location = cells[2].get_text(strip=True)
