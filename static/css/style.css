@@ -232,3 +232,16 @@ body.dragon-cursor, body.dragon-cursor * {
 #scimitar-toggle:hover {
     opacity: 1;
 }
+
+/* Mobile Break */
+.mobile-break {
+    display: none;
+    flex-basis: 100%;
+    height: 0;
+}
+
+@media (max-width: 768px) {
+    .mobile-break {
+        display: block;
+    }
+}
