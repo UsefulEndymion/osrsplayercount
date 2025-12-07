@@ -3,29 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Track Old School RuneScape (OSRS) player counts in real-time. View historical data, world populations, and activity trends.">
-    <meta name="keywords" content="OSRS, Old School RuneScape, player count, population tracker, runescape, mmo, rpg, statistics, world tracker">
+    <meta name="description" content="Live OSRS player count tracker. Real-time Old School RuneScape player statistics, historical data, world populations, and F2P vs Members breakdown. Updated every 5 minutes.">
+    <meta name="keywords" content="osrs player count, old school runescape player count, osrs population, runescape player count, osrs online players, osrs stats, osrs tracker, osrs world population">
     <meta name="author" content="UsefulEndymion">
+    <link rel="canonical" href="https://www.osrsplayercount.com/">
+    <meta name="robots" content="index, follow">
+    <link rel="icon" type="image/png" href="https://oldschool.runescape.wiki/images/Old_School_RuneScape_logo.png">
 
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website">
-    <meta property="og:title" content="OSRS Population Tracker - Real-time Stats">
-    <meta property="og:description" content="Real-time player count tracking and historical statistics for Old School RuneScape.">
+    <meta property="og:url" content="https://www.osrsplayercount.com/">
+    <meta property="og:title" content="OSRS Player Count - Live RuneScape Population Tracker">
+    <meta property="og:description" content="Live OSRS player count tracker with real-time statistics, historical data, and world population breakdown. Updated every 5 minutes.">
     <meta property="og:image" content="https://i.imgur.com/hRPMzoJ.png">
+    <meta property="og:site_name" content="OSRS Player Count">
 
     <!-- Twitter -->
-    <meta property="twitter:card" content="summary">
-    <meta property="twitter:title" content="OSRS Population Tracker - Real-time Stats">
-    <meta property="twitter:description" content="Real-time player count tracking and historical statistics for Old School RuneScape.">
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:title" content="OSRS Player Count - Live RuneScape Population Tracker">
+    <meta property="twitter:description" content="Live OSRS player count tracker with real-time statistics, historical data, and world population breakdown.">
     <meta property="twitter:image" content="https://i.imgur.com/hRPMzoJ.png">
 
-    <title>OSRS Population Tracker - Real-time Player Count & Stats</title>
+    <title>OSRS Player Count - Live Old School RuneScape Population Tracker</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@1.2.1/dist/chartjs-plugin-zoom.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    
+    <!-- JSON-LD Structured Data for SEO -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "OSRS Player Count Tracker",
+      "url": "https://www.osrsplayercount.com/",
+      "description": "Live OSRS player count tracker providing real-time Old School RuneScape population statistics, historical data, and world-by-world breakdown updated every 5 minutes.",
+      "applicationCategory": "Game Statistics",
+      "operatingSystem": "Any",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "about": {
+        "@type": "VideoGame",
+        "name": "Old School RuneScape",
+        "gamePlatform": "PC",
+        "publisher": {
+          "@type": "Organization",
+          "name": "Jagex"
+        }
+      },
+      "featureList": [
+        "Real-time OSRS player count",
+        "Historical population data",
+        "World-by-world player statistics",
+        "F2P vs Members breakdown",
+        "Interactive charts and graphs"
+      ]
+    }
+    </script>
 </head>
 <body>
 
@@ -39,7 +78,7 @@
 
     <div class="container">
         <div class="card">
-            <h1>OSRS Players Online</h1>
+            <h1>OSRS Player Count - Live Players Online</h1>
             <div id="player-count" class="big-number">Loading...</div>
             <div id="last-updated" class="timestamp" style="margin-bottom: 5px;">Wait a moment...</div>
             <div id="player-breakdown" style="font-size: 1em; color: #d4d4d4; margin-bottom: 5px; display: none;">
@@ -51,6 +90,7 @@
         </div>
 
         <div class="card">
+            <h2 style="font-size: 1.5em; margin-bottom: 16px; color: #ff981f;">Old School RuneScape Population History</h2>
             <!-- New Filters Row -->
             <div style="display:flex; flex-wrap:wrap; gap:12px; justify-content:center; align-items:center; margin-bottom:12px; padding-bottom:12px; border-bottom: 1px solid #383023;">
                 <label style="font-size:0.9em; color:#bdbdbd;">World:
@@ -142,9 +182,10 @@
             <div id="about-app" style="margin-top:12px; text-align:left; color:#bdbdbd; font-size:0.95em;">
                 <button id="about-toggle" style="background:#232323; color:#ff9800; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:1em;">More about this site</button>
                 <div id="about-content" style="display:none; margin-top:10px;">
-                    <strong>About this chart:</strong>
-                    <div style="margin-top:6px;">This chart shows the number of players online. Use the controls above to change the date range and granularity. For large ranges the backend should return aggregated data for best performance.</div>
-                    <div style="margin-top:8px;">How the bot works: a small python script periodically checks the Old School RuneScape homepage, extracts the reported online player count, and stores timestamped samples in the database. It runs at regular intervals (every 5 minutes by default).</div>
+                    <h3 style="color: #ff981f; font-size: 1.1em; margin-bottom: 8px;">About OSRS Player Count Tracker</h3>
+                    <div style="margin-top:6px;">This <strong>OSRS player count tracker</strong> displays real-time Old School RuneScape population statistics. Track how many players are online in OSRS right now, view historical player count trends, and analyze population data by world, region, F2P vs Members, and more.</div>
+                    <div style="margin-top:8px;"><strong>How it works:</strong> Our automated system checks the official Old School RuneScape homepage every 5 minutes to capture the current player count. This data is stored in a database and displayed through interactive charts, giving you accurate OSRS population statistics updated in real-time.</div>
+                    <div style="margin-top:8px;"><strong>Features:</strong> Filter by specific worlds, compare F2P and Members populations, view regional breakdowns, and explore years of historical OSRS player data with customizable time ranges and granularity options.</div>
                     <div style="margin-top:8px;">Historical data (older than Dec 2, 2025) was sourced from <a href="https://www.misplaceditems.com/rs_tools/graph" target="_blank" rel="noopener noreferrer">misplaceditems.com — RS Tools (graph)</a> as well as <a href="https://playercount.dev/" target="_blank" rel="noopener noreferrer">playercount.dev</a>. That historical dataset is coarser: its timestamps and sample intervals are not as fine-grained as the samples collected by this bot, so recent data (collected by the bot) will appear with higher resolution than the imported history.</div>
                     <div style="margin-top:8px; color: #ff981f;"><strong>Note:</strong> Detailed world data (including specific world counts, F2P vs Members splits, and regional data) only started being collected on Dec 4, 2025. Any data prior to this date only contains the global player count.</div>
                 </div>
