@@ -21,20 +21,11 @@ def home():
 
 @app.route('/robots.txt')
 def robots():
-    return "User-agent: *\nDisallow:", 200, {'Content-Type': 'text/plain'}
+    return app.send_static_file('robots.txt')
 
 @app.route('/sitemap.xml')
 def sitemap():
-    # Basic sitemap
-    xml = """<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-   <url>
-      <loc>https://osrsplayercount.com/</loc>
-      <changefreq>always</changefreq>
-      <priority>1.0</priority>
-   </url>
-</urlset>"""
-    return xml, 200, {'Content-Type': 'application/xml'}
+    return app.send_static_file('sitemap.xml')
 
 @app.route('/api/latest')
 def get_latest():

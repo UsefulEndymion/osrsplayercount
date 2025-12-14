@@ -1,0 +1,12 @@
+# robots.txt for osrsplayercount.com
+User-agent: *
+Allow: /
+Disallow: /static/
+Disallow: /__pycache__/
+Disallow: *.pyc$
+
+# Sitemap location
+Sitemap: https://www.osrsplayercount.com/sitemap.xml
+
+# Crawl-delay for respectful crawling
+Crawl-delay: 1
