@@ -186,6 +186,120 @@ label[style*="color:#bdbdbd"] {
 .info:hover .tooltip {
     display: block;
 }
+/* Series picker (Compare -> "Pick series…") */
+.picker {
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #383023;
+}
+.picker-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    align-items: center;
+}
+#seriesSearch {
+    min-width: 260px;
+}
+.picker-count {
+    color: #d4d4d4;
+    font-size: 0.85em;
+    text-shadow: 1px 1px 0 #000;
+}
+/* Zero-height anchor so the results list overlays the chart instead of
+   pushing it down every keystroke. */
+.picker-anchor {
+    position: relative;
+    width: 100%;
+    height: 0;
+}
+.picker-results {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: 4px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    width: min(360px, 90vw);
+    max-height: 40vh;
+    overflow-y: auto;
+    background: #2b231a;
+    border: 2px solid #383023;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    z-index: 40;
+    text-align: left;
+}
+.picker-results li {
+    padding: 5px 8px;
+    color: #ffff00;
+    font-size: 0.9em;
+    cursor: pointer;
+    text-shadow: 1px 1px 0 #000;
+}
+.picker-results li.active,
+.picker-results li:hover {
+    background: #5b4a3c;
+    color: #ffffff;
+}
+.picker-results li.picker-note {
+    color: #d4d4d4;
+    cursor: default;
+    font-size: 0.85em;
+}
+.picker-results li.picker-note:hover {
+    background: none;
+    color: #d4d4d4;
+}
+.picker-kind {
+    color: #ff981f;
+    font-size: 0.8em;
+    margin-left: 6px;
+}
+.picker-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    margin-top: 8px;
+}
+.picker-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #2b231a;
+    border: 1px solid #5b4a3c;
+    padding: 2px 6px;
+    font-size: 0.85em;
+    color: #ffff00;
+    text-shadow: 1px 1px 0 #000;
+}
+/* Matches the line colour this series is plotted in. */
+.picker-swatch {
+    width: 10px;
+    height: 10px;
+    border: 1px solid #000;
+    flex: none;
+}
+.picker-chip button {
+    background: none;
+    border: none;
+    padding: 0 2px;
+    font-size: 1em;
+    line-height: 1;
+    color: #d4d4d4;
+    cursor: pointer;
+}
+.picker-chip button:hover {
+    background: none;
+    color: #ff0000;
+}
+/* A filter that the active compare mode supersedes. */
+.control-muted {
+    opacity: 0.45;
+}
+
 /* Easter Egg: Connection Lost */
 #connection-lost {
     display: none;

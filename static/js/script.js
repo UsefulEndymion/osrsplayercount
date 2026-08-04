@@ -18,6 +18,16 @@ let populationChart = null;
 let rawHistory = []; // cache of last fetched raw points
 let globalMetadata = { locations: [], worlds: [], activity_groups: [] }; // Store metadata for comparison logic
 
+// Line colours, in the order series are plotted. The picker caps selections at
+// this length so no two hand-picked series ever share a colour.
+const SERIES_COLORS = ['#ffff00', '#00ff00', '#00ffff', '#ff00ff', '#ff981f', '#ff0000', '#ffffff', '#aaaaaa'];
+const MAX_SERIES = SERIES_COLORS.length;
+
+// Each hand-picked series is its own /api/history call, and each of those is a
+// world_data scan. Firing eight at once would occupy eight PythonAnywhere
+// workers simultaneously; a pool keeps the total work the same but the site up.
+const SERIES_CONCURRENCY = 3;
+
 // Utility: format JS Date -> ISO used by datetime-local (without seconds)
 function toLocalInputISO(date) {
     const pad = n => String(n).padStart(2, '0');
@@ -58,9 +68,260 @@ async function fetchMetadata() {
             opt.textContent = group.name;
             activitySelect.appendChild(opt);
         });
+
+        seriesCatalog = buildSeriesCatalog(data);
+        renderSeriesResults();
     } catch (error) {
         console.error('Error fetching metadata:', error);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Series picker
+//
+// A hand-picked comparison is 2-8 series, and each one is an ordinary
+// /api/history call with a filter the endpoint already supports: a world is
+// world_id, an activity group is its member ids (activity_id takes a set). So
+// this is entirely frontend — no new endpoint, and going through /api/history
+// per selection keeps the display groups intact, which a server-side grouping
+// would split back into raw activity strings.
+// ---------------------------------------------------------------------------
+
+let seriesCatalog = [];   // everything selectable
+let selectedSeries = [];  // what is plotted, in colour order
+let resultsCursor = -1;   // keyboard highlight within the visible results
+
+// Enough to scroll through, few enough that 447 worlds don't build 447 nodes.
+const MAX_RESULTS = 40;
+
+function buildSeriesCatalog(data) {
+    const worlds = (data.worlds || []).map(w => ({
+        key: `w:${w}`,
+        kind: 'world',
+        label: `World ${parseInt(w) + 300}`,
+        params: { world_id: w }
+    }));
+    // Keyed by name, not by ids: the ids are autoincrement surrogates, and a
+    // group's membership shifts when Jagex adds a sibling activity.
+    const activities = (data.activity_groups || []).map(group => ({
+        key: `a:${group.name}`,
+        kind: 'activity',
+        label: group.name,
+        params: { activity_id: group.ids.join(',') }
+    }));
+    return worlds.concat(activities);
+}
+
+function matchingSeries(query) {
+    const q = query.trim().toLowerCase();
+    const chosen = new Set(selectedSeries.map(s => s.key));
+    return seriesCatalog.filter(item =>
+        !chosen.has(item.key) && (!q || item.label.toLowerCase().includes(q)));
+}
+
+function renderSeriesResults() {
+    const input = document.getElementById('seriesSearch');
+    const list = document.getElementById('seriesResults');
+    if (!input || !list) return;
+
+    const open = document.activeElement === input && !input.disabled;
+    list.innerHTML = '';
+    if (!open) {
+        list.style.display = 'none';
+        input.setAttribute('aria-expanded', 'false');
+        return;
+    }
+
+    if (selectedSeries.length >= MAX_SERIES) {
+        list.appendChild(noteItem(`Limit of ${MAX_SERIES} series reached — remove one to add another.`));
+    } else {
+        const matches = matchingSeries(input.value);
+        if (matches.length === 0) {
+            list.appendChild(noteItem('Nothing matches.'));
+        }
+        matches.slice(0, MAX_RESULTS).forEach((item, idx) => {
+            const li = document.createElement('li');
+            li.setAttribute('role', 'option');
+            li.textContent = item.label;
+            const kind = document.createElement('span');
+            kind.className = 'picker-kind';
+            kind.textContent = item.kind === 'world' ? 'world' : 'activity';
+            li.appendChild(kind);
+            if (idx === resultsCursor) {
+                li.classList.add('active');
+                li.setAttribute('aria-selected', 'true');
+            }
+            // mousedown, not click: the input's blur would tear the list down first.
+            li.addEventListener('mousedown', ev => {
+                ev.preventDefault();
+                addSeries(item);
+            });
+            list.appendChild(li);
+        });
+        if (matches.length > MAX_RESULTS) {
+            list.appendChild(noteItem(`…and ${matches.length - MAX_RESULTS} more — keep typing.`));
+        }
+    }
+
+    list.style.display = 'block';
+    input.setAttribute('aria-expanded', 'true');
+}
+
+function noteItem(text) {
+    const li = document.createElement('li');
+    li.className = 'picker-note';
+    li.textContent = text;
+    return li;
+}
+
+function renderSeriesChips() {
+    const chips = document.getElementById('seriesChips');
+    const count = document.getElementById('seriesCount');
+    if (!chips) return;
+
+    chips.innerHTML = '';
+    selectedSeries.forEach((item, idx) => {
+        const chip = document.createElement('span');
+        chip.className = 'picker-chip';
+
+        const swatch = document.createElement('span');
+        swatch.className = 'picker-swatch';
+        swatch.style.background = SERIES_COLORS[idx];
+        chip.appendChild(swatch);
+        chip.appendChild(document.createTextNode(item.label));
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.textContent = '×';
+        remove.setAttribute('aria-label', `Remove ${item.label}`);
+        remove.addEventListener('click', () => removeSeries(item.key));
+        chip.appendChild(remove);
+
+        chips.appendChild(chip);
+    });
+
+    if (count) {
+        count.textContent = selectedSeries.length
+            ? `${selectedSeries.length} of ${MAX_SERIES} selected`
+            : `none selected (up to ${MAX_SERIES})`;
+    }
+}
+
+function addSeries(item) {
+    if (selectedSeries.length >= MAX_SERIES) return;
+    if (selectedSeries.some(s => s.key === item.key)) return;
+    selectedSeries.push(item);
+
+    const input = document.getElementById('seriesSearch');
+    if (input) input.value = '';
+    resultsCursor = 0;
+    renderSeriesChips();
+    renderSeriesResults();
+    updateFromInputs();
+}
+
+function removeSeries(key) {
+    selectedSeries = selectedSeries.filter(s => s.key !== key);
+    renderSeriesChips();
+    renderSeriesResults();
+    updateFromInputs();
+}
+
+function onSearchKeydown(ev) {
+    const visible = Math.min(matchingSeries(ev.target.value).length, MAX_RESULTS);
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        if (visible === 0) return;
+        const delta = ev.key === 'ArrowDown' ? 1 : -1;
+        resultsCursor = (resultsCursor + delta + visible) % visible;
+        renderSeriesResults();
+        const active = document.querySelector('#seriesResults li.active');
+        if (active) active.scrollIntoView({ block: 'nearest' });
+    } else if (ev.key === 'Enter') {
+        ev.preventDefault();
+        const matches = matchingSeries(ev.target.value);
+        const pick = matches[resultsCursor >= 0 ? resultsCursor : 0];
+        if (pick) addSeries(pick);
+    } else if (ev.key === 'Escape') {
+        ev.target.blur();
+    }
+}
+
+// Custom compare supersedes the four filter dropdowns: each series carries its
+// own filter, and applying a global one on top would silently empty any series
+// it doesn't match (a world has exactly one region, type and activity).
+const SUPERSEDED_FILTERS = ['worldSelect', 'locationSelect', 'f2pSelect', 'activitySelect'];
+
+function syncCompareUI() {
+    const custom = document.getElementById('compareSelect').value === 'custom';
+    const picker = document.getElementById('comparePicker');
+    if (picker) picker.style.display = custom ? 'block' : 'none';
+    SUPERSEDED_FILTERS.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.disabled = custom;
+        if (el.parentElement) el.parentElement.classList.toggle('control-muted', custom);
+    });
+}
+
+// Fetch the selected series through a small pool. Returns one entry per
+// selection, in selection order, with failures carried rather than thrown so a
+// single bad series doesn't take the whole chart down.
+async function fetchSelectedSeries(range) {
+    const results = new Array(selectedSeries.length);
+    let next = 0;
+
+    const worker = async () => {
+        while (next < selectedSeries.length) {
+            const idx = next++;
+            const item = selectedSeries[idx];
+            try {
+                const data = await fetchHistory(Object.assign({}, range, item.params));
+                results[idx] = { item, data };
+            } catch (err) {
+                results[idx] = { item, data: [], error: err.message || 'failed to load' };
+            }
+        }
+    };
+
+    const workers = Math.min(SERIES_CONCURRENCY, selectedSeries.length);
+    await Promise.all(Array.from({ length: workers }, worker));
+    return results;
+}
+
+// A series with no points keeps its legend entry and says why, rather than
+// vanishing — a retired world or a seasonal activity is an answer, not a gap.
+function seriesLabel(result) {
+    const base = result.item.kind === 'activity'
+        ? `${result.item.label} (activity)`
+        : result.item.label;
+    if (result.error) return `${base} — failed to load`;
+    if (result.data.length === 0) return `${base} — no data in range`;
+    return base;
+}
+
+function customDatasets(results) {
+    return results.map((result, idx) => ({
+        label: seriesLabel(result),
+        data: result.data.map(p => ({ x: new Date(p.timestamp), y: p.count })),
+        borderColor: SERIES_COLORS[idx],
+        backgroundColor: null
+    }));
+}
+
+function customNotice(results, startISO) {
+    if (results.length === 0) {
+        return `Search for worlds or activities above — up to ${MAX_SERIES} at a time.`;
+    }
+    const failed = results.filter(r => r.error);
+    if (failed.length) {
+        return `${failed.length} of ${results.length} series failed to load.`;
+    }
+    if (results.every(r => r.data.length === 0)) {
+        return 'None of these series have data in the selected range. Seasonal ' +
+               'activities and retired worlds only cover the period they ran — try a wider range.';
+    }
+    return filteredRangeNotice(startISO);
 }
 
 // Fetch latest player count
@@ -341,11 +602,13 @@ function showChartError(msg) {
 }
 
 function setControlsEnabled(enabled) {
-    const ids = ['applyRangeBtn','resetZoomBtn','granularitySelect','aggregationSelect','startInput','endInput','presetSelect', 'worldSelect', 'locationSelect', 'f2pSelect', 'activitySelect', 'compareSelect'];
+    const ids = ['applyRangeBtn','resetZoomBtn','granularitySelect','aggregationSelect','startInput','endInput','presetSelect', 'worldSelect', 'locationSelect', 'f2pSelect', 'activitySelect', 'compareSelect', 'seriesSearch', 'seriesClearBtn'];
     ids.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = !enabled;
     });
+    // Re-enabling would otherwise hand the superseded filters back.
+    if (enabled) syncCompareUI();
 }
 
 // Simple spinner helpers
@@ -447,7 +710,7 @@ async function updateFromInputs() {
     
     try {
         let datasets = [];
-        const colors = ['#ffff00', '#00ff00', '#00ffff', '#ff00ff', '#ff981f', '#ff0000', '#ffffff', '#aaaaaa'];
+        let customResults = null;
 
         if (compareMode === 'none') {
             // Standard single series fetch
@@ -507,36 +770,25 @@ async function updateFromInputs() {
             datasets = series.map((s, idx) => ({
                 label: locNames.get(String(s.key)) || `Location ${s.key}`,
                 data: s.data,
-                borderColor: colors[idx % colors.length],
+                borderColor: SERIES_COLORS[idx % SERIES_COLORS.length],
                 backgroundColor: null // No fill for many lines to avoid clutter
             }));
-        } else if (compareMode === 'worlds') {
-            // Compare All Worlds (Filtered by other selections)
-            // One request grouped by world server-side. Worlds with no data in the
-            // range (retired ones, or ones the filters exclude) are simply absent.
-            const series = await fetchGroupedHistory({
-                group_by: 'world',
-                start: startISO, end: endISO, unit, step, agg,
-                location_id: locationId,
-                is_f2p: isF2p,
-                activity_id: activityId
+        } else if (compareMode === 'custom') {
+            // Hand-picked series. Each carries its own filter, so the dropdowns
+            // above are ignored — see SUPERSEDED_FILTERS.
+            customResults = await fetchSelectedSeries({
+                start: startISO, end: endISO, unit, step, agg
             });
-
-            datasets = series.map((s, idx) => ({
-                label: `World ${parseInt(s.key) + 300}`,
-                data: s.data,
-                borderColor: colors[idx % colors.length],
-                backgroundColor: null,
-                borderWidth: 1, // Thinner lines for mass comparison
-                pointRadius: 0
-            }));
+            datasets = customDatasets(customResults);
         }
 
         // Every comparison mode reads world_data too, so they hit the same floor
         // even with no filter set.
         const filtered = worldId || locationId || isF2p !== "" || activityId
                          || compareMode !== 'none';
-        if (datasets.every(ds => !ds.data || ds.data.length === 0)) {
+        if (customResults) {
+            showChartError(customNotice(customResults, startISO));
+        } else if (datasets.every(ds => !ds.data || ds.data.length === 0)) {
             showChartError(emptyResultMessage(activityId));
         } else if (filtered) {
             showChartError(filteredRangeNotice(startISO));
@@ -642,7 +894,25 @@ async function initializePage() {
     document.getElementById('locationSelect').addEventListener('change', updateFromInputs);
     document.getElementById('f2pSelect').addEventListener('change', updateFromInputs);
     document.getElementById('activitySelect').addEventListener('change', updateFromInputs);
-    document.getElementById('compareSelect').addEventListener('change', updateFromInputs);
+    document.getElementById('compareSelect').addEventListener('change', () => {
+        syncCompareUI();
+        updateFromInputs();
+    });
+
+    // Series picker
+    const searchEl = document.getElementById('seriesSearch');
+    searchEl.addEventListener('input', () => { resultsCursor = 0; renderSeriesResults(); });
+    searchEl.addEventListener('focus', () => { resultsCursor = 0; renderSeriesResults(); });
+    searchEl.addEventListener('blur', () => renderSeriesResults());
+    searchEl.addEventListener('keydown', onSearchKeydown);
+    document.getElementById('seriesClearBtn').addEventListener('click', () => {
+        if (selectedSeries.length === 0) return;
+        selectedSeries = [];
+        renderSeriesChips();
+        updateFromInputs();
+    });
+    renderSeriesChips();
+    syncCompareUI();
     document.getElementById('resetZoomBtn').addEventListener('click', () => { if (populationChart) populationChart.resetZoom(); });
     
     // Recalculate availability when user edits start/end inputs

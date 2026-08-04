@@ -134,9 +134,27 @@
                         <option value="none">None</option>
                         <option value="type">F2P vs Members</option>
                         <option value="location">Regions</option>
-                        <option value="worlds">All Worlds</option>
+                        <option value="custom">Pick series…</option>
                     </select>
                 </label>
+            </div>
+
+            <!-- Hand-picked comparison. Hidden until Compare is "Pick series…". -->
+            <div id="comparePicker" class="picker" style="display:none;">
+                <div class="picker-row">
+                    <label style="font-size:0.9em; color:#bdbdbd;">Series:
+                        <input id="seriesSearch" type="text" autocomplete="off" role="combobox"
+                               aria-expanded="false" aria-controls="seriesResults" aria-autocomplete="list"
+                               placeholder="Search worlds and activities…">
+                    </label>
+                    <span id="seriesCount" class="picker-count"></span>
+                    <button id="seriesClearBtn" type="button">Clear</button>
+                </div>
+                <div id="seriesChips" class="picker-chips" aria-live="polite"></div>
+                <!-- Below the chips so the dropdown never hides what is already picked. -->
+                <div class="picker-anchor">
+                    <ul id="seriesResults" class="picker-results" role="listbox" style="display:none;"></ul>
+                </div>
             </div>
 
             <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:center; align-items:center; margin-bottom:12px;">
@@ -204,7 +222,7 @@
                     <h3 style="color: #ff981f; font-size: 1.1em; margin-bottom: 8px;">About OSRS Player Count Tracker</h3>
                     <div style="margin-top:6px;">This <strong>OSRS player count tracker</strong> displays real-time Old School RuneScape population statistics. Track how many players are online in OSRS right now, view historical player count trends, and analyze population data by world, region, F2P vs Members, and more.</div>
                     <div style="margin-top:8px;"><strong>How it works:</strong> Our automated system checks the official Old School RuneScape homepage every 5 minutes to capture the current player count. This data is stored in a database and displayed through interactive charts, giving you accurate OSRS population statistics updated in real-time.</div>
-                    <div style="margin-top:8px;"><strong>Features:</strong> Filter by specific worlds, compare F2P and Members populations, view regional breakdowns, and explore years of historical OSRS player data with customizable time ranges and granularity options.</div>
+                    <div style="margin-top:8px;"><strong>Features:</strong> Filter by specific worlds, minigames and skill worlds, compare F2P and Members populations, view regional breakdowns, plot any handful of worlds and activities against each other, and explore years of historical OSRS player data with customizable time ranges and granularity options.</div>
                     <div style="margin-top:8px;">Historical data (older than Dec 2, 2025) was sourced from <a href="https://www.misplaceditems.com/rs_tools/graph" target="_blank" rel="noopener noreferrer">misplaceditems.com — RS Tools (graph)</a> as well as <a href="https://playercount.dev/" target="_blank" rel="noopener noreferrer">playercount.dev</a>. That historical dataset is coarser: its timestamps and sample intervals are not as fine-grained as the samples collected by this bot, so recent data (collected by the bot) will appear with higher resolution than the imported history.</div>
                     <div style="margin-top:8px;"><strong>Download the data:</strong> the full database is published as a <a href="https://github.com/UsefulEndymion/osrsplayercount/releases/latest" target="_blank" rel="noopener noreferrer">downloadable snapshot</a>, refreshed periodically. It includes every world-level sample and the complete global history, plus a CSV of just the global player count for anyone who would rather not open a database.</div>
                     <div style="margin-top:8px; color: #ff981f;"><strong>Note:</strong> Detailed world data (including specific world counts, F2P vs Members splits, and regional data) only started being collected on Dec 4, 2025. Any data prior to this date only contains the global player count.</div>
