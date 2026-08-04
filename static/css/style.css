@@ -68,6 +68,11 @@ canvas {
     text-decoration: underline;
 }
 
+.footer-sep {
+    margin: 0 8px;
+    color: #777;
+}
+
 /* GitHub Link Tooltip */
 .github-link {
     position: relative;

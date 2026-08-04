@@ -18,6 +18,12 @@ osrs_data.db-wal
 *.sqlite3
 *.db.bak
 
+# Data dump artifacts (tools/make_dump.py writes these into the working dir)
+osrs_data-*.db.gz
+osrs_data-*.sql.gz
+osrs_global-*.csv
+release-notes-*.md
+
 # Logs and misc
 *.log
 
