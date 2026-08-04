@@ -138,16 +138,10 @@ def parse_iso(ts):
             return None
 
 def iso_z(dt):
-    """Render a datetime the way the DB stores timestamps: 2026-08-04T17:02:24Z.
+    """Format for comparison against stored timestamps, which are all `...Z`.
 
-    Every timestamp column (players, scrape_events, history_import) is `...Z`, and
-    the range filters are string comparisons. datetime.isoformat() emits
-    `...+00:00`, and '+' sorts below 'Z', so a row landing exactly on `end` was
-    excluded by `<= ?`. Always use this for a value compared against a stored
-    timestamp.
+    isoformat() emits `...+00:00`, and '+' sorts below 'Z'.
     """
-    # Naive means UTC here, same as parse_iso assumes. astimezone() would otherwise
-    # read it as system local time and shift it.
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc).strftime(ISO_Z)
@@ -474,6 +468,15 @@ def get_history():
                 where_clauses.append("det.is_f2p = ?")
                 params.append(is_f2p)
 
+            # `limit` means "most recent N", which only applies when no range was given.
+            tail_request = start_dt is None and end_dt is None
+
+            # An unbounded range here has no scrape_id bounds to restrict to, so it
+            # scans all of world_data. Default to 7d, as /api/history/grouped does.
+            if start_dt is None:
+                end_dt = end_dt or datetime.now(timezone.utc)
+                start_dt = end_dt - timedelta(days=7)
+
             # Resolve the time range to a scrape_id range and filter on that instead
             # of se.timestamp. scrape_id is the world_data PK prefix, so this is a
             # range scan; filtering on se.timestamp makes SQLite scan all ~4M rows
@@ -507,7 +510,7 @@ def get_history():
                          f"FROM ({inner}) GROUP BY {bucket_group} ORDER BY timestamp ASC")
             else:
                 limit_clause = ""
-                if not start_dt and not end_dt and limit:
+                if tail_request and limit:
                     limit_clause = f"LIMIT {limit}"
                     order_by = "ORDER BY se.timestamp DESC"
                 query = f"{inner} {order_by} {limit_clause}"
