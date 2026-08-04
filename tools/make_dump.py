@@ -453,7 +453,7 @@ def publish(token, tag, title, body, assets, draft=False):
 
 # --------------------------------------------------------------------------
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default=None,
                         help="path to the live database (default: from config.py)")
@@ -480,12 +480,11 @@ def main():
     parser.add_argument("--keep-artifacts", action="store_true",
                         help="keep the local asset files after a successful "
                              "publish instead of deleting them")
-    args = parser.parse_args()
+    return parser
 
-    if sqlite3.sqlite_version_info < MIN_SQLITE:
-        die("SQLite %s is too old; need %s or newer for VACUUM INTO"
-            % (sqlite3.sqlite_version, ".".join(str(n) for n in MIN_SQLITE)))
 
+def resolve_db_path(args):
+    """The database to dump, defaulting to the app's own config."""
     db_path = args.db
     if db_path is None:
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -493,33 +492,18 @@ def main():
         db_path = DB_PATH
     if not os.path.exists(db_path):
         die("no database at %s" % db_path)
+    return db_path
 
-    token = read_token(args)
-    if not args.dry_run and not token:
-        die("No token. Set GITHUB_TOKEN or pass --token-file. Use --dry-run to "
-            "build artifacts without publishing.")
 
-    now = dt.datetime.now(dt.timezone.utc)
-    date_str = now.strftime("%Y-%m-%d")
-    generated_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    tag = "data-%s" % date_str
+def build_artifacts(args, db_path, date_str, generated_at, snap, csv_path):
+    """Build the compressed snapshot and the CSV. Returns (gz_name, gz_path,
+    stats, csv_rows).
 
+    The intermediate uncompressed snapshot is the expensive thing on a quota'd
+    host, so its removal goes in a finally -- a failed build must not strand
+    ~100 MB until someone notices.
+    """
     out = args.out_dir
-    if not os.path.isdir(out):
-        os.makedirs(out)
-
-    db_name = "osrs_data-%s.db" % date_str
-    snap = os.path.join(out, db_name)
-    csv_name = "osrs_global-%s.csv" % date_str
-    csv_path = os.path.join(out, csv_name)
-
-    if not args.dry_run:
-        log("Checking release interval...")
-        check_release_interval(token, args.force, args.if_due)
-
-    # The intermediate uncompressed snapshot is the expensive thing on a quota'd
-    # host, so its removal goes in a finally -- a failed upload must not strand
-    # ~100 MB until someone notices.
     try:
         if args.strategy == "iterdump":
             gz_name = "osrs_data-%s.sql.gz" % date_str
@@ -541,6 +525,7 @@ def main():
                               build_meta_rows(generated_at, stats))
             log("  wrote %s" % human(os.path.getsize(gz_path)))
         else:
+            db_name = os.path.basename(snap)
             gz_name = db_name + ".gz"
             gz_path = os.path.join(out, gz_name)
 
@@ -569,29 +554,18 @@ def main():
         if os.path.exists(snap):
             os.remove(snap)
 
-    assets = [
-        (gz_name, gz_path, sha256(gz_path)),
-        (csv_name, csv_path, sha256(csv_path)),
-    ]
-    body = render_notes(date_str, stats, assets, csv_rows)
-    # Date first so releases sort and scan by date in the GitHub releases list.
-    title = "%s — OSRS player count data" % date_str
+    return gz_name, gz_path, stats, csv_rows
 
-    notes_path = os.path.join(out, "release-notes-%s.md" % date_str)
-    with open(notes_path, "w", encoding="utf-8") as fh:
-        fh.write(body)
 
-    if args.dry_run:
-        log("")
-        log("Dry run. Nothing published. Artifacts:")
-        for name, path, digest in assets:
-            log("  %s  %s  %s" % (name, human(os.path.getsize(path)), digest))
-        log("  %s" % notes_path)
-        return
+def report_dry_run(assets, notes_path):
+    log("")
+    log("Dry run. Nothing published. Artifacts:")
+    for name, path, digest in assets:
+        log("  %s  %s  %s" % (name, human(os.path.getsize(path)), digest))
+    log("  %s" % notes_path)
 
-    log("Publishing %s%s..." % (tag, " (draft)" if args.draft else ""))
-    url = publish(token, tag, title, body, assets, draft=args.draft)
 
+def report_published(args, tag, url, assets):
     # GitHub now holds the only copies that matter. Left in place these would
     # accumulate ~40 MB per run against a quota'd host.
     if not args.keep_artifacts:
@@ -605,6 +579,62 @@ def main():
         log("Discard it with:  gh release delete %s --yes" % tag)
     else:
         log("Published: %s" % url)
+
+
+def main():
+    args = build_parser().parse_args()
+
+    if sqlite3.sqlite_version_info < MIN_SQLITE:
+        die("SQLite %s is too old; need %s or newer for VACUUM INTO"
+            % (sqlite3.sqlite_version, ".".join(str(n) for n in MIN_SQLITE)))
+
+    db_path = resolve_db_path(args)
+
+    token = read_token(args)
+    if not args.dry_run and not token:
+        die("No token. Set GITHUB_TOKEN or pass --token-file. Use --dry-run to "
+            "build artifacts without publishing.")
+
+    now = dt.datetime.now(dt.timezone.utc)
+    date_str = now.strftime("%Y-%m-%d")
+    generated_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    tag = "data-%s" % date_str
+
+    out = args.out_dir
+    if not os.path.isdir(out):
+        os.makedirs(out)
+
+    db_name = "osrs_data-%s.db" % date_str
+    snap = os.path.join(out, db_name)
+    csv_name = "osrs_global-%s.csv" % date_str
+    csv_path = os.path.join(out, csv_name)
+
+    if not args.dry_run:
+        log("Checking release interval...")
+        check_release_interval(token, args.force, args.if_due)
+
+    gz_name, gz_path, stats, csv_rows = build_artifacts(
+        args, db_path, date_str, generated_at, snap, csv_path)
+
+    assets = [
+        (gz_name, gz_path, sha256(gz_path)),
+        (csv_name, csv_path, sha256(csv_path)),
+    ]
+    body = render_notes(date_str, stats, assets, csv_rows)
+    # Date first so releases sort and scan by date in the GitHub releases list.
+    title = "%s — OSRS player count data" % date_str
+
+    notes_path = os.path.join(out, "release-notes-%s.md" % date_str)
+    with open(notes_path, "w", encoding="utf-8") as fh:
+        fh.write(body)
+
+    if args.dry_run:
+        report_dry_run(assets, notes_path)
+        return
+
+    log("Publishing %s%s..." % (tag, " (draft)" if args.draft else ""))
+    url = publish(token, tag, title, body, assets, draft=args.draft)
+    report_published(args, tag, url, assets)
 
 
 if __name__ == "__main__":

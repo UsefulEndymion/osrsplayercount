@@ -12,7 +12,8 @@ OSRS_MAIN_URL = "https://oldschool.runescape.com/"
 OSRS_SLU_URL = "https://oldschool.runescape.com/slu"
 
 # Scraper Settings
-SCRAPE_INTERVAL = 300 # 5 minutes
+SCRAPE_INTERVAL = 300  # 5 minutes
 WORLD_SCRAPE_INTERVAL = 1800  # 30 minutes
 REQUEST_TIMEOUT = 15
-USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+USER_AGENT = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+              '(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
