@@ -548,10 +548,9 @@ async function initializePage() {
     document.getElementById('startInput').addEventListener('change', onInputChange);
     document.getElementById('endInput').addEventListener('change', onInputChange);
 
-    // Initial fetch and render
-    await fetchMetadata();
-    await fetchLatest();
-    await updateFromInputs();
+    // Independent on first load: compare mode starts at 'none', and the selects
+    // fetchMetadata populates keep their static value="" option selected.
+    await Promise.all([fetchMetadata(), fetchLatest(), updateFromInputs()]);
 
     // Auto-refresh every 2 minutes
     setInterval(async () => {
