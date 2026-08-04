@@ -5,6 +5,9 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -28,3 +31,29 @@ jobs:
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    - name: Test
+      run: python -m unittest discover -s tests -t . -v
+
+  # The fixtures are a frozen copy, so they can only catch us breaking the parser.
+  # This job is what notices Jagex changing their markup. Separate from `build` on
+  # purpose: when it goes red next to a green build, the cause is the site, not the
+  # commit. The weekly cron covers the stretches with no pushes — note GitHub
+  # disables cron workflows after 60 days of repo inactivity.
+  live-scrape:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.13"
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    - name: Scrape the live pages
+      env:
+        RUN_LIVE_SCRAPE_TESTS: "1"
+      run: python -m unittest tests.test_parsers.LiveScrapeTest -v

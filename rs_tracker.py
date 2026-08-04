@@ -20,6 +20,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def parse_osrs_count(html):
+    """Pull the total player count out of the front page. None if absent."""
+    match = re.search(r"([\d,]+)\s*(?:people playing|players online)", html, re.IGNORECASE)
+    if match:
+        return int(match.group(1).replace(',', ''))
+    return None
+
 def get_osrs_count():
     try:
         headers = {'User-Agent': USER_AGENT}
@@ -27,15 +34,70 @@ def get_osrs_count():
         response = requests.get(OSRS_MAIN_URL, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
 
-        # Find the number in the HTML
-        match = re.search(r"([\d,]+)\s*(?:people playing|players online)", response.text, re.IGNORECASE)
-        if match:
-            return int(match.group(1).replace(',', ''))
+        return parse_osrs_count(response.text)
 
     except Exception as e:
         logger.error(f"Error scraping total count: {e}")
 
     return None
+
+def parse_world_data(html):
+    """Pull one dict per world out of the /slu server list.
+
+    Split out from the fetch so it can be tested against a saved page —
+    Jagex changing this markup is the likeliest way the tracker breaks.
+    """
+    soup = BeautifulSoup(html, 'html.parser')
+    world_rows = []
+
+    # Find all rows with class 'server-list__row'
+    rows = soup.find_all('tr', class_='server-list__row')
+
+    for row in rows:
+        cells = row.find_all('td')
+        if len(cells) < 5:
+            continue
+
+        # 1. World Number
+        world_link = cells[0].find('a', class_='server-list__world-link')
+        if not world_link:
+            continue
+        world_text = world_link.get_text(strip=True) # e.g., "Old School 93"
+        # Extract number
+        world_match = re.search(r"Old School (\d+)", world_text)
+        if not world_match:
+            continue
+        world_number = int(world_match.group(1))
+
+        # 2. Player Count
+        players_text = cells[1].get_text(strip=True) # e.g., "48 players"
+        player_match = re.search(r"([\d,]+)", players_text)
+
+        if player_match:
+            player_count = int(player_match.group(1).replace(',', ''))
+        else:
+            # If no number is found, it means the world is full (2000 players)
+            player_count = 2000
+
+        # 3. Location
+        location = cells[2].get_text(strip=True)
+
+        # 4. Type
+        type_text = cells[3].get_text(strip=True).lower()
+        is_f2p = 'free' in type_text
+
+        # 5. Activity
+        activity = cells[4].get_text(strip=True)
+
+        world_rows.append({
+            'world_number': world_number,
+            'player_count': player_count,
+            'location': location,
+            'is_f2p': is_f2p,
+            'activity': activity
+        })
+
+    return world_rows
 
 def get_world_data():
     try:
@@ -43,57 +105,7 @@ def get_world_data():
         response = requests.get(OSRS_SLU_URL, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
 
-        soup = BeautifulSoup(response.content, 'html.parser')
-        world_rows = []
-        
-        # Find all rows with class 'server-list__row'
-        rows = soup.find_all('tr', class_='server-list__row')
-        
-        for row in rows:
-            cells = row.find_all('td')
-            if len(cells) < 5:
-                continue
-                
-            # 1. World Number
-            world_link = cells[0].find('a', class_='server-list__world-link')
-            if not world_link:
-                continue
-            world_text = world_link.get_text(strip=True) # e.g., "Old School 93"
-            # Extract number
-            world_match = re.search(r"Old School (\d+)", world_text)
-            if not world_match:
-                continue
-            world_number = int(world_match.group(1))
-            
-            # 2. Player Count
-            players_text = cells[1].get_text(strip=True) # e.g., "48 players"
-            player_match = re.search(r"([\d,]+)", players_text)
-            
-            if player_match:
-                player_count = int(player_match.group(1).replace(',', ''))
-            else:
-                # If no number is found, it means the world is full (2000 players)
-                player_count = 2000
-            
-            # 3. Location
-            location = cells[2].get_text(strip=True)
-            
-            # 4. Type
-            type_text = cells[3].get_text(strip=True).lower()
-            is_f2p = 'free' in type_text
-            
-            # 5. Activity
-            activity = cells[4].get_text(strip=True)
-            
-            world_rows.append({
-                'world_number': world_number,
-                'player_count': player_count,
-                'location': location,
-                'is_f2p': is_f2p,
-                'activity': activity
-            })
-            
-        return world_rows
+        return parse_world_data(response.content)
 
     except Exception as e:
         logger.error(f"Error scraping world data: {e}")
