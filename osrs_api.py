@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
 import os
+import sqlite3
 from datetime import datetime, timedelta, timezone
 import logging
 
@@ -146,10 +147,71 @@ def _bucket_exprs(unit, step, col):
     if unit == 'day':
         return (f"strftime('%Y-%m-%d', {col})", f"strftime('%Y-%m-%d', {col})")
     if unit == 'week':
-        return (f"date({col}, 'weekday 0', '-6 days')", f"strftime('%Y-%W', {col})")
+        # Group by the same Monday the label shows. Grouping by strftime('%Y-%W')
+        # instead splits the week straddling New Year into two buckets that then
+        # render as two points on the same date.
+        return (f"date({col}, 'weekday 0', '-6 days')", f"date({col}, 'weekday 0', '-6 days')")
     if unit == 'month':
         return (f"strftime('%Y-%m-01', {col})", f"strftime('%Y-%m', {col})")
     return None
+
+
+# Global history spans two eras: weekly rows imported from misplaceditems before
+# native tracking began, and 5-minute samples in `players` after. `history_import`
+# names its statistic 'avg'/'peak'; the API's agg param says 'avg'/'max'.
+IMPORT_STAT = {'avg': 'avg', 'max': 'peak'}
+
+ISO_Z = '%Y-%m-%dT%H:%M:%SZ'
+
+
+def _import_end(conn):
+    """Where imported coverage stops, or None if nothing has been imported.
+
+    Doubles as the lower bound of the native query, so the two eras can never both
+    answer for the same instant. That matters while the old weekly rows are still
+    sitting in `players` partway through a rollout.
+    """
+    try:
+        row = conn.execute('SELECT MAX(period_end) FROM history_import').fetchone()
+    except sqlite3.OperationalError:
+        return None  # table not created yet; behave exactly as before
+    return row[0] if row else None
+
+
+def _imported_history(conn, start_dt, end_dt, unit, agg):
+    """The imported era, bucketed no finer than the weekly source data.
+
+    Only ever rolls a series up into its own statistic -- peaks with MAX, averages
+    with AVG. Deriving a monthly peak from weekly averages (or vice versa) is not
+    possible, and filtering to one `stat` first is what prevents it.
+    """
+    where = ['stat = ?']
+    params = [IMPORT_STAT.get(agg, 'peak')]
+    # A week is included when it overlaps the range at all, not only when it starts
+    # inside it, or a range landing mid-week would drop the week containing it.
+    if start_dt:
+        where.append('period_end > ?')
+        params.append(start_dt.strftime(ISO_Z))
+    if end_dt:
+        where.append('period_start <= ?')
+        params.append(end_dt.strftime(ISO_Z))
+    where_str = 'WHERE ' + ' AND '.join(where)
+
+    if unit == 'month':
+        agg_func = 'ROUND(AVG(count))' if agg == 'avg' else 'MAX(count)'
+        query = (f"SELECT strftime('%Y-%m-01', period_start) as timestamp, {agg_func} as count "
+                 f"FROM history_import {where_str} "
+                 f"GROUP BY strftime('%Y-%m', period_start) ORDER BY timestamp ASC")
+    else:
+        # Minute/hour/day all floor to week: the source has nothing finer, and the
+        # rows are already one per week, so this is a passthrough rather than a
+        # re-bucketing. Re-bucketing would be wrong anyway -- the site's weeks start
+        # on varying weekdays, so snapping them to Mondays would collide pairs.
+        query = (f"SELECT period_start as timestamp, count "
+                 f"FROM history_import {where_str} ORDER BY period_start ASC")
+
+    return [{'timestamp': r['timestamp'], 'count': r['count']}
+            for r in conn.execute(query, params)]
 
 
 # group_by value -> (key expression, whether counts must be summed across worlds
@@ -469,17 +531,26 @@ def get_history():
             from_clause = f"FROM {table}"
             where_clauses = []
             params = []
-            
+
             if start_dt:
                 where_clauses.append(f"{col_ts} >= ?")
                 params.append(start_dt.isoformat())
             if end_dt:
                 where_clauses.append(f"{col_ts} <= ?")
                 params.append(end_dt.isoformat())
-                
+
+            # Split the two eras at the end of imported coverage. Keeping this on the
+            # native query as well as the imported one means the old weekly rows can
+            # sit in `players` without being double-counted, which is what lets the
+            # data load and the code deploy happen as separate steps.
+            import_end = _import_end(conn)
+            if import_end:
+                where_clauses.append(f"{col_ts} >= ?")
+                params.append(import_end)
+
             limit_clause = ""
             order_by = "ORDER BY timestamp ASC"
-            
+
             if not start_dt and not end_dt and not buckets:
                 lim = limit if limit else 288
                 limit_clause = f"LIMIT {lim}"
@@ -489,19 +560,25 @@ def get_history():
             query = f"{select_clause} {from_clause} {where_str} {group_by} {order_by} {limit_clause}"
             
             rows = conn.execute(query, params).fetchall()
-            
+
             results = []
             for row in rows:
                 results.append({
                     "timestamp": row['timestamp'],
                     "count": row['count']
                 })
-                
+
             if "DESC" in order_by:
                 results.reverse()
-                
+
+            # Prepend the imported era when the request actually reaches into it.
+            # Skipped for the bare "last N samples" call, which is asking about now.
+            if import_end and (buckets or start_dt or end_dt):
+                if not start_dt or start_dt.strftime(ISO_Z) < import_end:
+                    results = _imported_history(conn, start_dt, end_dt, unit, agg) + results
+
             return jsonify(results)
-            
+
     except Exception as e:
         logger.error(f"Error in get_history: {e}")
         return jsonify({"error": str(e)}), 500
