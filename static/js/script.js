@@ -179,6 +179,12 @@ async function fetchGroupedHistory({group_by, start=null, end=null, unit=null, s
     })).filter(s => s.data.length > 0);
 }
 
+// The range boxes no longer describe what is on screen.
+function markRangeCustom() {
+    const presetEl = document.getElementById('presetSelect');
+    if (presetEl) presetEl.value = 'custom';
+}
+
 function buildChart(datasets, granularityInfo) {
     const ctx = document.getElementById('populationChart').getContext('2d');
     const viewerTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local';
@@ -231,8 +237,15 @@ function buildChart(datasets, granularityInfo) {
             plugins: {
                 decimation: { enabled: true, algorithm: 'lttb', samples: 1000 },
                 zoom: {
-                    pan: { enabled: true, mode: 'x' },
-                    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+                    // Zooming and panning move the view without touching the
+                    // range boxes. Marking the preset Custom keeps the dropdown
+                    // honest, and means picking a preset afterwards is a real
+                    // change event rather than a silent no-op.
+                    pan: { enabled: true, mode: 'x', onPanComplete: markRangeCustom },
+                    zoom: {
+                        wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x',
+                        onZoomComplete: markRangeCustom
+                    }
                 },
                 annotation: {
                     annotations: peak ? {
@@ -590,8 +603,18 @@ async function initializePage() {
     // Ensure minute options availability reflects the default range
     updateGranularityAvailability();
 
-    // Wire up controls
-    document.getElementById('applyRangeBtn').addEventListener('click', updateFromInputs);
+    // Wire up controls. Apply recomputes the active preset rather than replaying
+    // the boxes: a preset means "last N from now", and picking the preset that is
+    // already showing fires no change event, so this is the only way to refresh
+    // one. Hand-edited boxes read as Custom and are used as-is.
+    document.getElementById('applyRangeBtn').addEventListener('click', () => {
+        const preset = document.getElementById('presetSelect');
+        if (preset && preset.value && preset.value !== 'custom') {
+            applyPreset(preset.value);
+        } else {
+            updateFromInputs();
+        }
+    });
     const presetEl = document.getElementById('presetSelect');
     if (presetEl) {
         // set default preset to Last 7d
