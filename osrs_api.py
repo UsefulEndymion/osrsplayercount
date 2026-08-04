@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
 
+from activities import group_activities
 from config import BASE_DIR
 from database import get_db_connection
 
@@ -123,6 +124,10 @@ def get_metadata():
         return jsonify({
             "locations": [{"id": row['id'], "name": row['name']} for row in locations],
             "activities": [{"id": row['id'], "description": row['description']} for row in activities],
+            # Raw descriptions above, the dropdown's collapsed view here. The UI
+            # wants the second; anything reading the source strings wants the first.
+            "activity_groups": group_activities(
+                (row['id'], row['description']) for row in activities),
             "worlds": [row['world_number'] for row in worlds]
         })
     finally:
@@ -262,15 +267,20 @@ def _scrape_id_bounds(conn, start_dt, end_dt):
     return lo, hi
 
 
-def _world_detail_clauses(location_id, is_f2p):
+def _world_detail_clauses(q):
     """(clauses, params) for the world_details filters shared by both endpoints."""
     clauses, params = [], []
-    if location_id is not None:
+    if q.location_id is not None:
         clauses.append("det.location_id = ?")
-        params.append(location_id)
-    if is_f2p is not None:
+        params.append(q.location_id)
+    if q.is_f2p is not None:
         clauses.append("det.is_f2p = ?")
-        params.append(is_f2p)
+        params.append(q.is_f2p)
+    if q.activity_ids:
+        # A group selection arrives as every member id, so this is an IN even
+        # when the user picked one thing from the dropdown.
+        clauses.append(f"det.activity_id IN ({','.join('?' * len(q.activity_ids))})")
+        params.extend(q.activity_ids)
     return clauses, params
 
 
@@ -295,6 +305,33 @@ TOO_MANY_POINTS_MSG = ("Too many points for one comparison. "
 MINUTE_SPAN_MSG = ("Minute-level queries cannot span more than 30 days. "
                    "Please use a larger unit (hour/day) or a shorter time range.")
 
+# Bound on the IN list built from activity_id. The largest real group is 16
+# members, so this only ever rejects input no dropdown could have produced.
+MAX_ACTIVITY_IDS = 200
+
+TOO_MANY_ACTIVITIES_MSG = f"At most {MAX_ACTIVITY_IDS} activity_id values are allowed."
+
+
+def _parse_activity_ids(values):
+    """Repeated and/or comma-separated `activity_id` params -> unique ints.
+
+    Unparseable tokens are dropped rather than rejected, which is how `type=int`
+    already treats the other filters: a bad value means no filter, not a 400.
+    """
+    ids = []
+    for value in values:
+        for token in value.split(','):
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                parsed = int(token)
+            except ValueError:
+                continue
+            if parsed not in ids:
+                ids.append(parsed)
+    return tuple(ids)
+
 
 @dataclass
 class HistoryQuery:
@@ -309,6 +346,7 @@ class HistoryQuery:
     world_id: int = None
     location_id: int = None
     is_f2p: int = None
+    activity_ids: tuple = ()
 
     @classmethod
     def from_request(cls):
@@ -322,6 +360,7 @@ class HistoryQuery:
             world_id=request.args.get('world_id', default=None, type=int),
             location_id=request.args.get('location_id', default=None, type=int),
             is_f2p=request.args.get('is_f2p', default=None, type=int),
+            activity_ids=_parse_activity_ids(request.args.getlist('activity_id')),
         )
 
     @property
@@ -329,10 +368,19 @@ class HistoryQuery:
         return "ROUND(AVG(count))" if self.agg == 'avg' else "MAX(count)"
 
     @property
+    def needs_details_join(self):
+        """Whether any filter reads world_details, and so needs it joined in."""
+        return (self.location_id is not None or self.is_f2p is not None
+                or bool(self.activity_ids))
+
+    @property
     def use_world_data(self):
         """Whether any filter forces the per-world tables instead of `players`."""
-        return (self.world_id is not None or self.location_id is not None
-                or self.is_f2p is not None)
+        return self.world_id is not None or self.needs_details_join
+
+    @property
+    def too_many_activities(self):
+        return len(self.activity_ids) > MAX_ACTIVITY_IDS
 
     @property
     def minute_span_exceeded(self):
@@ -348,7 +396,7 @@ def _world_history(conn, q):
     """One series from world_data: a single world's count, or the sum over the
     worlds matching the filters at each scrape."""
     from_clause = "FROM world_data wd JOIN scrape_events se ON wd.scrape_id = se.id"
-    if q.location_id is not None or q.is_f2p is not None:
+    if q.needs_details_join:
         from_clause += " JOIN world_details det ON wd.detail_id = det.id"
 
     where_clauses, params = [], []
@@ -361,7 +409,7 @@ def _world_history(conn, q):
         select_clause = "SELECT se.timestamp as timestamp, SUM(wd.player_count) as count"
         group_by = "GROUP BY se.id"
 
-    detail_clauses, detail_params = _world_detail_clauses(q.location_id, q.is_f2p)
+    detail_clauses, detail_params = _world_detail_clauses(q)
     where_clauses += detail_clauses
     params += detail_params
 
@@ -459,6 +507,8 @@ def _grouped_error(q, group_by, buckets):
     """The 400 response for an unusable /api/history/grouped request, else None."""
     if group_by not in GROUPINGS:
         return jsonify({"error": f"group_by must be one of: {', '.join(GROUPINGS)}"}), 400
+    if q.too_many_activities:
+        return jsonify({"error": TOO_MANY_ACTIVITIES_MSG}), 400
     if not buckets:
         return jsonify({"error": "unit is required: minute, hour, day, week or month."}), 400
     if q.start_dt > q.end_dt:
@@ -485,7 +535,7 @@ def _grouped_query(q, group_by, buckets, lo, hi):
     key_expr, sum_within_scrape = GROUPINGS[group_by]
 
     from_clause = "FROM world_data wd JOIN scrape_events se ON wd.scrape_id = se.id"
-    if sum_within_scrape or q.location_id is not None or q.is_f2p is not None:
+    if sum_within_scrape or q.needs_details_join:
         from_clause += " JOIN world_details det ON wd.detail_id = det.id"
 
     where_clauses = ["wd.scrape_id >= ?", "wd.scrape_id <= ?"]
@@ -493,7 +543,7 @@ def _grouped_query(q, group_by, buckets, lo, hi):
     if q.world_id is not None:
         where_clauses.append("wd.world_number = ?")
         params.append(q.world_id)
-    detail_clauses, detail_params = _world_detail_clauses(q.location_id, q.is_f2p)
+    detail_clauses, detail_params = _world_detail_clauses(q)
     where_clauses += detail_clauses
     params += detail_params
     where_str = "WHERE " + " AND ".join(where_clauses)
@@ -551,7 +601,7 @@ def get_history_grouped():
     Query parameters:
         - group_by (str): 'world' (default), 'location' or 'f2p'.
         - start, end, unit, step, agg: as /api/history. unit is required.
-        - world_id, location_id, is_f2p: filters, as /api/history.
+        - world_id, location_id, is_f2p, activity_id: filters, as /api/history.
 
     Returns {"timestamps": [...], "series": [{"key": k, "counts": [n|null, ...]}]}
     where each counts array is aligned to timestamps by index.
@@ -607,10 +657,15 @@ def get_history():
         - world_id (int): Filter by specific world number.
         - location_id (int): Filter by location ID.
         - is_f2p (bool/int): Filter by F2P status (1=True, 0=False).
+        - activity_id (int): Filter by activity. Repeatable, and accepts a
+          comma-separated list, so one grouped dropdown entry can send every
+          member id at once. Multiple ids sum the worlds carrying any of them.
     """
     q = HistoryQuery.from_request()
     if q.minute_span_exceeded:
         return jsonify({"error": MINUTE_SPAN_MSG}), 400
+    if q.too_many_activities:
+        return jsonify({"error": TOO_MANY_ACTIVITIES_MSG}), 400
 
     conn = get_db_connection()
     try:

@@ -26,12 +26,21 @@ SCRAPE_TIMES = [
     '2026-01-06T00:00:00Z',
 ]
 
-# world -> (location_id, is_f2p, player counts across the 6 scrapes)
+# Two of these are one family, so a group selection sends both ids and has to
+# sum them; `-` stays the no-activity bucket.
+ACTIVITIES = {
+    1: '-',
+    2: 'Castle Wars 1',
+    3: 'Castle Wars - Free',
+    4: 'Guardians of the Rift',
+}
+
+# world -> (location_id, is_f2p, activity_id, player counts across the 6 scrapes)
 WORLDS = {
-    301: (1, 0, [100, 110, 120, 130, 140, 150]),
-    302: (1, 1, [10, 20, 30, 40, 50, 60]),
-    303: (2, 0, [200, 210, 220, 230, 240, 250]),
-    304: (2, 1, [5, 5, 5, 5, 5, 5]),
+    301: (1, 0, 2, [100, 110, 120, 130, 140, 150]),
+    302: (1, 1, 3, [10, 20, 30, 40, 50, 60]),
+    303: (2, 0, 4, [200, 210, 220, 230, 240, 250]),
+    304: (2, 1, 1, [5, 5, 5, 5, 5, 5]),
 }
 
 # Global `players` samples — deliberately NOT the sum of the world counts, so a
@@ -59,25 +68,27 @@ def build_db(path):
 
     conn.executemany('INSERT INTO locations (id, name) VALUES (?, ?)',
                      [(1, 'United States'), (2, 'Germany')])
-    conn.execute("INSERT INTO activities (id, description) VALUES (1, '-')")
+    conn.executemany('INSERT INTO activities (id, description) VALUES (?, ?)',
+                     sorted(ACTIVITIES.items()))
 
-    # One world_details row per (location, f2p) pair the worlds actually use.
+    # One world_details row per (location, f2p, activity) triple the worlds use.
     detail_ids = {}
-    for world, (loc, f2p, _) in WORLDS.items():
-        key = (loc, f2p)
+    for world, (loc, f2p, activity, _) in WORLDS.items():
+        key = (loc, f2p, activity)
         if key not in detail_ids:
             cur = conn.execute(
-                'INSERT INTO world_details (location_id, is_f2p, activity_id) VALUES (?, ?, 1)', key)
+                'INSERT INTO world_details (location_id, is_f2p, activity_id) '
+                'VALUES (?, ?, ?)', key)
             detail_ids[key] = cur.lastrowid
 
     for i, ts in enumerate(SCRAPE_TIMES, start=1):
         conn.execute('INSERT INTO scrape_events (id, timestamp) VALUES (?, ?)', (i, ts))
         conn.execute('INSERT INTO players (timestamp, count) VALUES (?, ?)',
                      (ts, PLAYER_COUNTS[i - 1]))
-        for world, (loc, f2p, counts) in WORLDS.items():
+        for world, (loc, f2p, activity, counts) in WORLDS.items():
             conn.execute(
                 'INSERT INTO world_data (scrape_id, world_number, player_count, detail_id) '
-                'VALUES (?, ?, ?, ?)', (i, world, counts[i - 1], detail_ids[(loc, f2p)]))
+                'VALUES (?, ?, ?, ?)', (i, world, counts[i - 1], detail_ids[(loc, f2p, activity)]))
 
     conn.commit()
     conn.close()
@@ -217,7 +228,7 @@ class HistoryWorldDataTest(ApiTestCase):
     def test_single_world_returns_its_own_counts(self):
         _, body = self.get(
             '/api/history?world_id=301&start=2026-01-05T00:00:00Z&end=2026-01-06T00:00:00Z')
-        self.assertEqual([r['count'] for r in body], WORLDS[301][2])
+        self.assertEqual([r['count'] for r in body], WORLDS[301][3])
 
     def test_location_sums_within_each_scrape(self):
         _, body = self.get(
@@ -234,7 +245,7 @@ class HistoryWorldDataTest(ApiTestCase):
     def test_location_and_f2p_combine(self):
         _, body = self.get(
             '/api/history?location_id=2&is_f2p=0&start=2026-01-05T00:00:00Z&end=2026-01-06T00:00:00Z')
-        self.assertEqual([r['count'] for r in body], WORLDS[303][2])
+        self.assertEqual([r['count'] for r in body], WORLDS[303][3])
 
     def test_bucketing_aggregates_across_time_not_within_it(self):
         # Hourly max of a summed series: the sum happens per scrape first, then
@@ -249,6 +260,50 @@ class HistoryWorldDataTest(ApiTestCase):
             '/api/history?world_id=301&start=2020-01-01T00:00:00Z&end=2020-01-02T00:00:00Z')
         self.assertEqual(status, 200)
         self.assertEqual(body, [])
+
+    def test_single_activity_sums_only_its_worlds(self):
+        _, body = self.get(
+            '/api/history?activity_id=4&start=2026-01-05T00:00:00Z&end=2026-01-06T00:00:00Z')
+        self.assertEqual([r['count'] for r in body], WORLDS[303][3])
+
+    def test_grouped_activity_sums_every_member(self):
+        # The Castle Wars family: worlds 301 + 302, sent as one comma-separated
+        # value the way the dropdown does it.
+        _, body = self.get(
+            '/api/history?activity_id=2,3&start=2026-01-05T00:00:00Z&end=2026-01-06T00:00:00Z')
+        self.assertEqual([r['count'] for r in body], [110, 130, 150, 170, 190, 210])
+
+    def test_repeated_activity_id_params_are_equivalent_to_a_list(self):
+        _, body = self.get(
+            '/api/history?activity_id=2&activity_id=3'
+            '&start=2026-01-05T00:00:00Z&end=2026-01-06T00:00:00Z')
+        self.assertEqual([r['count'] for r in body], [110, 130, 150, 170, 190, 210])
+
+    def test_activity_and_f2p_combine(self):
+        # Castle Wars is two worlds, only one of which is F2P.
+        _, body = self.get(
+            '/api/history?activity_id=2,3&is_f2p=1'
+            '&start=2026-01-05T00:00:00Z&end=2026-01-06T00:00:00Z')
+        self.assertEqual([r['count'] for r in body], WORLDS[302][3])
+
+    def test_unmatched_activity_is_empty_not_an_error(self):
+        # What a retired seasonal activity looks like: a valid id, no rows.
+        status, body = self.get(
+            '/api/history?activity_id=999&start=2026-01-05T00:00:00Z&end=2026-01-06T00:00:00Z')
+        self.assertEqual(status, 200)
+        self.assertEqual(body, [])
+
+    def test_unparseable_activity_id_drops_the_filter(self):
+        # Matches how `type=int` treats location_id: a bad value is no filter.
+        _, body = self.get(
+            '/api/history?activity_id=abc&start=2026-01-05T00:00:00Z&end=2026-01-06T00:00:00Z')
+        self.assertEqual([r['count'] for r in body], PLAYER_COUNTS)
+
+    def test_too_many_activity_ids_is_rejected(self):
+        ids = ','.join(str(n) for n in range(500))
+        status, body = self.get(f'/api/history?activity_id={ids}')
+        self.assertEqual(status, 400)
+        self.assertIn('activity_id', body['error'])
 
 
 class HistoryGroupedTest(ApiTestCase):
@@ -303,6 +358,27 @@ class HistoryGroupedTest(ApiTestCase):
             f'/api/history/grouped?group_by=world&unit=hour&is_f2p=1&{self.RANGE}')
         self.assertEqual([s['key'] for s in body['series']], [302, 304])
 
+    def test_activity_filter_narrows_the_series_set(self):
+        _, body = self.get(
+            f'/api/history/grouped?group_by=world&unit=hour&activity_id=2,3&{self.RANGE}')
+        self.assertEqual([s['key'] for s in body['series']], [301, 302])
+
+    def test_activity_filter_applies_to_a_summed_grouping(self):
+        # group_by=location already joins world_details; the activity clause has
+        # to land on that same join rather than a second one.
+        _, body = self.get(
+            f'/api/history/grouped?group_by=location&unit=hour&activity_id=2,3&{self.RANGE}')
+        by_key = {s['key']: s['counts'] for s in body['series']}
+        self.assertEqual(list(by_key), [1])
+        self.assertEqual(by_key[1], [150, 190])
+
+    def test_too_many_activity_ids_is_rejected(self):
+        ids = ','.join(str(n) for n in range(500))
+        status, body = self.get(
+            f'/api/history/grouped?group_by=world&unit=hour&activity_id={ids}&{self.RANGE}')
+        self.assertEqual(status, 400)
+        self.assertIn('activity_id', body['error'])
+
     def test_range_outside_all_scrapes_is_empty(self):
         status, body = self.get(
             '/api/history/grouped?group_by=world&unit=hour'
@@ -328,6 +404,18 @@ class MetadataTest(ApiTestCase):
         self.assertEqual(sorted(loc['name'] for loc in body['locations']),
                          ['Germany', 'United States'])
         self.assertEqual(sorted(body['worlds']), [301, 302, 303, 304])
+
+    def test_activities_stay_raw(self):
+        _, body = self.get('/api/metadata')
+        self.assertEqual(sorted(a['description'] for a in body['activities']),
+                         sorted(ACTIVITIES.values()))
+
+    def test_activity_groups_collapse_families_and_drop_no_activity(self):
+        _, body = self.get('/api/metadata')
+        self.assertEqual(body['activity_groups'], [
+            {'name': 'Castle Wars', 'ids': [2, 3]},
+            {'name': 'Guardians of the Rift', 'ids': [4]},
+        ])
 
 
 if __name__ == '__main__':
