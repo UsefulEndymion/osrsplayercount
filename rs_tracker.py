@@ -20,12 +20,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 def parse_osrs_count(html):
     """Pull the total player count out of the front page. None if absent."""
     match = re.search(r"([\d,]+)\s*(?:people playing|players online)", html, re.IGNORECASE)
     if match:
         return int(match.group(1).replace(',', ''))
     return None
+
 
 def get_osrs_count():
     try:
@@ -40,6 +42,7 @@ def get_osrs_count():
         logger.error(f"Error scraping total count: {e}")
 
     return None
+
 
 def parse_world_data(html):
     """Pull one dict per world out of the /slu server list.
@@ -62,7 +65,7 @@ def parse_world_data(html):
         world_link = cells[0].find('a', class_='server-list__world-link')
         if not world_link:
             continue
-        world_text = world_link.get_text(strip=True) # e.g., "Old School 93"
+        world_text = world_link.get_text(strip=True)  # e.g., "Old School 93"
         # Extract number
         world_match = re.search(r"Old School (\d+)", world_text)
         if not world_match:
@@ -70,7 +73,7 @@ def parse_world_data(html):
         world_number = int(world_match.group(1))
 
         # 2. Player Count
-        players_text = cells[1].get_text(strip=True) # e.g., "48 players"
+        players_text = cells[1].get_text(strip=True)  # e.g., "48 players"
         player_match = re.search(r"([\d,]+)", players_text)
 
         if player_match:
@@ -99,6 +102,7 @@ def parse_world_data(html):
 
     return world_rows
 
+
 def get_world_data():
     try:
         headers = {'User-Agent': USER_AGENT}
@@ -111,11 +115,85 @@ def get_world_data():
         logger.error(f"Error scraping world data: {e}")
         return []
 
+
+def _intern(conn, cache, table, column, value):
+    """The row id for `value` in a lookup table, inserting it if it's new.
+
+    `cache` is seeded from the table once per scrape and updated in place, so a
+    scrape does at most one INSERT per genuinely new value.
+    """
+    if value not in cache:
+        cursor = conn.execute(f"INSERT INTO {table} ({column}) VALUES (?)", (value,))
+        cache[value] = cursor.lastrowid
+    return cache[value]
+
+
+def _save_world_data(conn, scrape_id, world_data_list):
+    """One world_data row per world, interning the locations, activities and
+    (location, f2p, activity) combinations they reference."""
+    location_map = {row[0]: row[1] for row in conn.execute("SELECT name, id FROM locations")}
+    activity_map = {row[0]: row[1] for row in conn.execute("SELECT description, id FROM activities")}
+    details_map = {
+        (row[0], bool(row[1]), row[2]): row[3]
+        for row in conn.execute("SELECT location_id, is_f2p, activity_id, id FROM world_details")}
+
+    data_to_insert = []
+    for w in world_data_list:
+        loc_id = _intern(conn, location_map, 'locations', 'name', w['location'])
+        act_id = _intern(conn, activity_map, 'activities', 'description', w['activity'])
+
+        detail_key = (loc_id, w['is_f2p'], act_id)
+        if detail_key not in details_map:
+            cursor = conn.execute(
+                "INSERT INTO world_details (location_id, is_f2p, activity_id) VALUES (?, ?, ?)",
+                (loc_id, w['is_f2p'], act_id)
+            )
+            details_map[detail_key] = cursor.lastrowid
+
+        data_to_insert.append(
+            (scrape_id, w['world_number'], w['player_count'], details_map[detail_key]))
+
+    conn.executemany(
+        "INSERT INTO world_data (scrape_id, world_number, player_count, detail_id) "
+        "VALUES (?, ?, ?, ?)",
+        data_to_insert
+    )
+
+
+def _save_round(conn, current_time, count, scrape_worlds, world_data_list):
+    """Persist one scrape round: the global count, plus world data when it's due.
+
+    A missing count or an empty world list is logged and skipped rather than
+    raised — a failed scrape shouldn't take the tracker down with it.
+    """
+    with conn:
+        if count:
+            conn.execute(
+                "INSERT INTO players (timestamp, count) VALUES (?, ?)",
+                (current_time, count)
+            )
+            logger.info(f"[{current_time}] Saved total count: {count:,}")
+        else:
+            logger.warning(f"[{current_time}] Failed to get total count.")
+
+        if not scrape_worlds:
+            return
+        if not world_data_list:
+            logger.warning(f"[{current_time}] Failed to get world data or list empty.")
+            return
+
+        logger.info(f"[{current_time}] Saving data for {len(world_data_list)} worlds...")
+        cursor = conn.execute(
+            "INSERT INTO scrape_events (timestamp) VALUES (?)", (current_time,))
+        _save_world_data(conn, cursor.lastrowid, world_data_list)
+        logger.info(f"[{current_time}] Saved world data.")
+
+
 def main():
     # 1. Initialize Database
     conn = init_db()
     logger.info(f"Bot started. Saving to: {os.path.abspath(DB_PATH)}")
-    
+
     # Track last world scrape time
     last_world_scrape = 0
 
@@ -124,111 +202,35 @@ def main():
             # 2. Scrape Data
             # Always get total count
             count = get_osrs_count()
-            
+
             # Check if we should scrape worlds
             current_ts = time.time()
             scrape_worlds = (current_ts - last_world_scrape >= WORLD_SCRAPE_INTERVAL)
-            
+
             world_data_list = []
             if scrape_worlds:
                 world_data_list = get_world_data()
                 if world_data_list:
                     last_world_scrape = current_ts
-            
+
             # Store timezone-aware UTC timestamps in ISO 8601
-            current_time = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+            current_time = (datetime.datetime.now(datetime.timezone.utc)
+                            .replace(microsecond=0).isoformat().replace('+00:00', 'Z'))
 
             # 3. Save to Database
-            with conn:
-                if count:
-                    conn.execute(
-                        "INSERT INTO players (timestamp, count) VALUES (?, ?)",
-                        (current_time, count)
-                    )
-                    logger.info(f"[{current_time}] Saved total count: {count:,}")
-                else:
-                    logger.warning(f"[{current_time}] Failed to get total count.")
-                
-                if scrape_worlds:
-                    if world_data_list:
-                        logger.info(f"[{current_time}] Saving data for {len(world_data_list)} worlds...")
-                        
-                        # 0. Create Scrape Event
-                        cursor = conn.execute("INSERT INTO scrape_events (timestamp) VALUES (?)", (current_time,))
-                        scrape_id = cursor.lastrowid
-
-                        # Cache locations
-                        location_map = {}
-                        for row in conn.execute("SELECT name, id FROM locations"):
-                            location_map[row[0]] = row[1]
-
-                        # Cache activities
-                        activity_map = {}
-                        for row in conn.execute("SELECT description, id FROM activities"):
-                            activity_map[row[0]] = row[1]
-
-                        # Cache details (unique combos of loc_id, f2p, activity_id)
-                        details_map = {}
-                        for row in conn.execute("SELECT location_id, is_f2p, activity_id, id FROM world_details"):
-                            details_map[(row[0], bool(row[1]), row[2])] = row[3]
-
-                        data_to_insert = []
-
-                        for w in world_data_list:
-                            # 1. Handle Location
-                            loc_name = w['location']
-                            if loc_name not in location_map:
-                                cursor = conn.execute("INSERT INTO locations (name) VALUES (?)", (loc_name,))
-                                location_map[loc_name] = cursor.lastrowid
-                            
-                            loc_id = location_map[loc_name]
-
-                            # 2. Handle Activity
-                            act_desc = w['activity']
-                            if act_desc not in activity_map:
-                                cursor = conn.execute("INSERT INTO activities (description) VALUES (?)", (act_desc,))
-                                activity_map[act_desc] = cursor.lastrowid
-                            
-                            act_id = activity_map[act_desc]
-                            
-                            # 3. Handle Details (The unique combo)
-                            detail_key = (loc_id, w['is_f2p'], act_id)
-                            
-                            if detail_key not in details_map:
-                                cursor = conn.execute(
-                                    "INSERT INTO world_details (location_id, is_f2p, activity_id) VALUES (?, ?, ?)", 
-                                    (loc_id, w['is_f2p'], act_id)
-                                )
-                                details_map[detail_key] = cursor.lastrowid
-                            
-                            detail_id = details_map[detail_key]
-
-                            # 4. Prepare Data
-                            data_to_insert.append((
-                                scrape_id, 
-                                w['world_number'], 
-                                w['player_count'],
-                                detail_id
-                            ))
-
-                        conn.executemany(
-                            "INSERT INTO world_data (scrape_id, world_number, player_count, detail_id) VALUES (?, ?, ?, ?)",
-                            data_to_insert
-                        )
-                        logger.info(f"[{current_time}] Saved world data.")
-                    else:
-                        logger.warning(f"[{current_time}] Failed to get world data or list empty.")
+            _save_round(conn, current_time, count, scrape_worlds, world_data_list)
 
         except Exception as e:
             logger.critical(f"Critical Error in loop: {e}")
             # Try to reconnect to DB if something broke the connection
             try:
                 conn = init_db()
-            except:
-                pass
+            except Exception as reconnect_error:
+                logger.error(f"Reconnect failed: {reconnect_error}")
 
         # 4. Wait for the configured interval
         time.sleep(SCRAPE_INTERVAL)
+
 
 if __name__ == "__main__":
     main()

@@ -4,6 +4,7 @@ from config import DB_PATH
 
 logger = logging.getLogger(__name__)
 
+
 def get_db_connection():
     """Establishes a connection to the SQLite database."""
     try:
@@ -13,6 +14,7 @@ def get_db_connection():
     except sqlite3.Error as e:
         logger.error(f"Database connection error: {e}")
         raise
+
 
 def init_db():
     """
