@@ -114,6 +114,24 @@ def get_metadata():
     finally:
         conn.close()
 
+def _bucket_exprs(unit, step, col):
+    """(select, group by) expressions bucketing `col` by unit. None if unit is unset
+    or unrecognised, in which case the caller should return raw rows."""
+    if unit == 'minute':
+        secs = (step if step else 5) * 60
+        return (f"datetime((strftime('%s', {col}) / {secs}) * {secs}, 'unixepoch')",
+                f"(strftime('%s', {col}) / {secs})")
+    if unit == 'hour':
+        return (f"strftime('%Y-%m-%dT%H:00:00Z', {col})", f"strftime('%Y-%m-%dT%H', {col})")
+    if unit == 'day':
+        return (f"strftime('%Y-%m-%d', {col})", f"strftime('%Y-%m-%d', {col})")
+    if unit == 'week':
+        return (f"date({col}, 'weekday 0', '-6 days')", f"strftime('%Y-%W', {col})")
+    if unit == 'month':
+        return (f"strftime('%Y-%m-01', {col})", f"strftime('%Y-%m', {col})")
+    return None
+
+
 @app.route('/api/history')
 def get_history():
     """
@@ -233,24 +251,44 @@ def get_history():
                 where_clauses.append("det.is_f2p = ?")
                 params.append(is_f2p)
 
-            # Time Filters
+            # Resolve the time range to a scrape_id range and filter on that instead
+            # of se.timestamp. scrape_id is the world_data PK prefix, so this is a
+            # range scan; filtering on se.timestamp makes SQLite scan all ~4M rows
+            # and only then discard them (4800ms vs 10ms on a 7 day window).
             if start_dt:
-                where_clauses.append("se.timestamp >= ?")
-                params.append(start_dt.isoformat())
+                lo = conn.execute('SELECT MIN(id) FROM scrape_events WHERE timestamp >= ?',
+                                  (start_dt.isoformat(),)).fetchone()[0]
+                if lo is None:
+                    return jsonify([])
+                where_clauses.append("wd.scrape_id >= ?")
+                params.append(lo)
             if end_dt:
-                where_clauses.append("se.timestamp <= ?")
-                params.append(end_dt.isoformat())
+                hi = conn.execute('SELECT MAX(id) FROM scrape_events WHERE timestamp <= ?',
+                                  (end_dt.isoformat(),)).fetchone()[0]
+                if hi is None:
+                    return jsonify([])
+                where_clauses.append("wd.scrape_id <= ?")
+                params.append(hi)
                 
-            # Limit (only if no time range)
-            limit_clause = ""
-            if not start_dt and not end_dt and limit:
-                 lim = limit if limit else 288
-                 limit_clause = f"LIMIT {lim}"
-                 order_by = "ORDER BY se.timestamp DESC"
-                 
             where_str = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
-            query = f"{select_clause} {from_clause} {where_str} {group_by} {order_by} {limit_clause}"
-            
+            # One (timestamp, count) row per scrape event.
+            inner = f"{select_clause} {from_clause} {where_str} {group_by}"
+
+            buckets = _bucket_exprs(unit, step, 'timestamp')
+            if buckets:
+                # Two levels on purpose: the inner SUM adds up worlds at one instant,
+                # the outer agg reduces across instants in the bucket. Collapsing them
+                # would sum across time.
+                bucket_select, bucket_group = buckets
+                query = (f"SELECT {bucket_select} as timestamp, {agg_func} as count "
+                         f"FROM ({inner}) GROUP BY {bucket_group} ORDER BY timestamp ASC")
+            else:
+                limit_clause = ""
+                if not start_dt and not end_dt and limit:
+                    limit_clause = f"LIMIT {limit}"
+                    order_by = "ORDER BY se.timestamp DESC"
+                query = f"{inner} {order_by} {limit_clause}"
+
             rows = conn.execute(query, params).fetchall()
             
             results = []
@@ -274,24 +312,11 @@ def get_history():
             select_clause = ""
             group_by = ""
             
-            if unit:
-                # Aggregation Logic
-                if unit == 'minute':
-                    step_seconds = (step if step else 5) * 60
-                    select_clause = f"SELECT datetime((strftime('%s', {col_ts}) / {step_seconds}) * {step_seconds}, 'unixepoch') as timestamp, {agg_func} as count"
-                    group_by = f"GROUP BY (strftime('%s', {col_ts}) / {step_seconds})"
-                elif unit == 'hour':
-                    select_clause = f"SELECT strftime('%Y-%m-%dT%H:00:00Z', {col_ts}) as timestamp, {agg_func} as count"
-                    group_by = f"GROUP BY strftime('%Y-%m-%dT%H', {col_ts})"
-                elif unit == 'day':
-                    select_clause = f"SELECT strftime('%Y-%m-%d', {col_ts}) as timestamp, {agg_func} as count"
-                    group_by = f"GROUP BY strftime('%Y-%m-%d', {col_ts})"
-                elif unit == 'week':
-                    select_clause = f"SELECT date({col_ts}, 'weekday 0', '-6 days') as timestamp, {agg_func} as count"
-                    group_by = f"GROUP BY strftime('%Y-%W', {col_ts})"
-                elif unit == 'month':
-                    select_clause = f"SELECT strftime('%Y-%m-01', {col_ts}) as timestamp, {agg_func} as count"
-                    group_by = f"GROUP BY strftime('%Y-%m', {col_ts})"
+            buckets = _bucket_exprs(unit, step, col_ts)
+            if buckets:
+                bucket_select, bucket_group = buckets
+                select_clause = f"SELECT {bucket_select} as timestamp, {agg_func} as count"
+                group_by = f"GROUP BY {bucket_group}"
             else:
                 # Raw Data
                 select_clause = f"SELECT {col_ts}, {col_count}"
@@ -310,7 +335,7 @@ def get_history():
             limit_clause = ""
             order_by = "ORDER BY timestamp ASC"
             
-            if not start_dt and not end_dt and not unit:
+            if not start_dt and not end_dt and not buckets:
                 lim = limit if limit else 288
                 limit_clause = f"LIMIT {lim}"
                 order_by = "ORDER BY timestamp DESC"
