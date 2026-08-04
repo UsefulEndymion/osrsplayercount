@@ -12,8 +12,8 @@ A comprehensive tool to track, store, and visualize Old School RuneScape (OSRS) 
 *   **Interactive Dashboard**:
     *   Real-time player count display.
     *   Historical graphs with zoom and pan capabilities.
-    *   **Advanced Filtering**: Filter history by World, Region (Location), or World Type (F2P/Members).
-    *   **Comparison Mode**: Compare F2P vs Members, or compare different Regions side-by-side.
+    *   **Advanced Filtering**: Filter history by World, Region (Location), World Type (F2P/Members), or Activity.
+    *   **Comparison Mode**: Compare F2P vs Members, compare Regions side-by-side, or pick up to 8 specific worlds and activities to plot together.
 
 ## Requirements
 
