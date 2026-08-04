@@ -134,6 +134,41 @@ async function fetchHistory({start=null, end=null, unit=null, step=null, limit=n
     }
 }
 
+// Fetch every series of a comparison in one request. Returns an array of
+// {key, data:[{x,y}]}, dropping series with no points in the range.
+async function fetchGroupedHistory({group_by, start=null, end=null, unit=null, step=null, agg=null, world_id=null, location_id=null, is_f2p=null} = {}) {
+    const params = new URLSearchParams();
+    params.set('group_by', group_by);
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    if (unit) params.set('unit', unit);
+    if (step) params.set('step', step);
+    if (agg) params.set('agg', agg);
+    if (world_id) params.set('world_id', world_id);
+    if (location_id) params.set('location_id', location_id);
+    if (is_f2p !== null && is_f2p !== "") params.set('is_f2p', is_f2p);
+
+    const response = await fetch(`${API_BASE}/api/history/grouped?${params.toString()}`);
+    if (!response.ok) {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            const err = await response.json();
+            throw new Error(err.error || err.message || `Server responded ${response.status}`);
+        }
+        throw new Error((await response.text()) || `Server responded ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const times = payload.timestamps.map(t => new Date(t));
+    return payload.series.map(s => ({
+        key: s.key,
+        data: s.counts.reduce((pts, c, i) => {
+            if (c !== null) pts.push({ x: times[i], y: c });
+            return pts;
+        }, [])
+    })).filter(s => s.data.length > 0);
+}
+
 function buildChart(datasets, granularityInfo) {
     const ctx = document.getElementById('populationChart').getContext('2d');
     const viewerTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local';
@@ -406,52 +441,38 @@ async function updateFromInputs() {
             // Compare Regions
             // We ignore 'location_id' filter.
             // We keep world/f2p filters if set (though world implies location, so usually world filter should be empty)
-            
-            // Use globalMetadata.locations to get list
-            const locs = globalMetadata.locations;
-            const requests = locs.map(loc => 
-                fetchHistory({ start: startISO, end: endISO, unit, step, agg, world_id: worldId, is_f2p: isF2p, location_id: loc.id })
-                    .then(data => ({ loc, data }))
-            );
-            
-            const results = await Promise.all(requests);
-            
-            datasets = results.map((res, idx) => ({
-                label: res.loc.name,
-                data: res.data.map(p => ({ x: new Date(p.timestamp), y: p.count })),
+            const locNames = new Map(globalMetadata.locations.map(loc => [String(loc.id), loc.name]));
+            const series = await fetchGroupedHistory({
+                group_by: 'location',
+                start: startISO, end: endISO, unit, step, agg,
+                world_id: worldId, is_f2p: isF2p
+            });
+
+            datasets = series.map((s, idx) => ({
+                label: locNames.get(String(s.key)) || `Location ${s.key}`,
+                data: s.data,
                 borderColor: colors[idx % colors.length],
                 backgroundColor: null // No fill for many lines to avoid clutter
             }));
         } else if (compareMode === 'worlds') {
             // Compare All Worlds (Filtered by other selections)
-            // We iterate all known worlds and fetch data for each, respecting location/f2p filters.
-            // If a world doesn't match the filters, the API returns empty data, and we skip it.
-            
-            const worlds = globalMetadata.worlds;
-            // Create a promise for each world
-            const requests = worlds.map(w => 
-                fetchHistory({ 
-                    start: startISO, end: endISO, unit, step, agg, 
-                    world_id: w, 
-                    location_id: locationId, 
-                    is_f2p: isF2p 
-                })
-                .then(data => ({ world: w, data }))
-                .catch(e => null)
-            );
-            
-            const results = await Promise.all(requests);
-            
-            datasets = results
-                .filter(r => r && r.data && r.data.length > 0)
-                .map((res, idx) => ({
-                    label: `World ${parseInt(res.world) + 300}`,
-                    data: res.data.map(p => ({ x: new Date(p.timestamp), y: p.count })),
-                    borderColor: colors[idx % colors.length],
-                    backgroundColor: null,
-                    borderWidth: 1, // Thinner lines for mass comparison
-                    pointRadius: 0
-                }));
+            // One request grouped by world server-side. Worlds with no data in the
+            // range (retired ones, or ones the filters exclude) are simply absent.
+            const series = await fetchGroupedHistory({
+                group_by: 'world',
+                start: startISO, end: endISO, unit, step, agg,
+                location_id: locationId,
+                is_f2p: isF2p
+            });
+
+            datasets = series.map((s, idx) => ({
+                label: `World ${parseInt(s.key) + 300}`,
+                data: s.data,
+                borderColor: colors[idx % colors.length],
+                backgroundColor: null,
+                borderWidth: 1, // Thinner lines for mass comparison
+                pointRadius: 0
+            }));
         }
 
         buildChart(datasets, { unit, step });
@@ -548,10 +569,9 @@ async function initializePage() {
     document.getElementById('startInput').addEventListener('change', onInputChange);
     document.getElementById('endInput').addEventListener('change', onInputChange);
 
-    // Initial fetch and render
-    await fetchMetadata();
-    await fetchLatest();
-    await updateFromInputs();
+    // Independent on first load: compare mode starts at 'none', and the selects
+    // fetchMetadata populates keep their static value="" option selected.
+    await Promise.all([fetchMetadata(), fetchLatest(), updateFromInputs()]);
 
     // Auto-refresh every 2 minutes
     setInterval(async () => {

@@ -38,11 +38,12 @@
     <meta property="twitter:image" content="https://i.imgur.com/hRPMzoJ.png">
 
     <title>OSRS Player Count - Live Old School RuneScape Population Tracker</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@1.2.1/dist/chartjs-plugin-zoom.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+    <!-- Keep defer on these and on script.js. Removing it from any one breaks load order. -->
+    <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@1.2.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     
     <!-- JSON-LD Structured Data for SEO -->
@@ -206,7 +207,7 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='js/script.js') }}"></script>
 
     <footer class="site-footer">
         <div class="container">
