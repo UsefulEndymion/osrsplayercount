@@ -16,7 +16,7 @@ document.addEventListener('DOMContentLoaded', function() {
 // Globals
 let populationChart = null;
 let rawHistory = []; // cache of last fetched raw points
-let globalMetadata = { locations: [], worlds: [] }; // Store metadata for comparison logic
+let globalMetadata = { locations: [], worlds: [], activity_groups: [] }; // Store metadata for comparison logic
 
 // Utility: format JS Date -> ISO used by datetime-local (without seconds)
 function toLocalInputISO(date) {
@@ -49,7 +49,15 @@ async function fetchMetadata() {
             locSelect.appendChild(opt);
         });
 
-        // Activities are available in data.activities if we want to add them later
+        // Populate Activities. Uses the pre-grouped list, not data.activities:
+        // the value is every member id of one dropdown entry, comma-separated.
+        const activitySelect = document.getElementById('activitySelect');
+        (data.activity_groups || []).forEach(group => {
+            const opt = document.createElement('option');
+            opt.value = group.ids.join(',');
+            opt.textContent = group.name;
+            activitySelect.appendChild(opt);
+        });
     } catch (error) {
         console.error('Error fetching metadata:', error);
     }
@@ -98,7 +106,7 @@ async function fetchLatest() {
 }
 
 // Fetch history from API with optional start/end (ISO) and unit/step for server-side aggregation
-async function fetchHistory({start=null, end=null, unit=null, step=null, limit=null, agg=null, world_id=null, location_id=null, is_f2p=null} = {}) {
+async function fetchHistory({start=null, end=null, unit=null, step=null, limit=null, agg=null, world_id=null, location_id=null, is_f2p=null, activity_id=null} = {}) {
     try {
         const params = new URLSearchParams();
         if (start) params.set('start', start);
@@ -111,6 +119,7 @@ async function fetchHistory({start=null, end=null, unit=null, step=null, limit=n
         if (world_id) params.set('world_id', world_id);
         if (location_id) params.set('location_id', location_id);
         if (is_f2p !== null && is_f2p !== "") params.set('is_f2p', is_f2p);
+        if (activity_id) params.set('activity_id', activity_id);
 
         const response = await fetch(`${API_BASE}/api/history?${params.toString()}`);
         const contentType = response.headers.get('content-type') || '';
@@ -136,7 +145,7 @@ async function fetchHistory({start=null, end=null, unit=null, step=null, limit=n
 
 // Fetch every series of a comparison in one request. Returns an array of
 // {key, data:[{x,y}]}, dropping series with no points in the range.
-async function fetchGroupedHistory({group_by, start=null, end=null, unit=null, step=null, agg=null, world_id=null, location_id=null, is_f2p=null} = {}) {
+async function fetchGroupedHistory({group_by, start=null, end=null, unit=null, step=null, agg=null, world_id=null, location_id=null, is_f2p=null, activity_id=null} = {}) {
     const params = new URLSearchParams();
     params.set('group_by', group_by);
     if (start) params.set('start', start);
@@ -147,6 +156,7 @@ async function fetchGroupedHistory({group_by, start=null, end=null, unit=null, s
     if (world_id) params.set('world_id', world_id);
     if (location_id) params.set('location_id', location_id);
     if (is_f2p !== null && is_f2p !== "") params.set('is_f2p', is_f2p);
+    if (activity_id) params.set('activity_id', activity_id);
 
     const response = await fetch(`${API_BASE}/api/history/grouped?${params.toString()}`);
     if (!response.ok) {
@@ -167,6 +177,12 @@ async function fetchGroupedHistory({group_by, start=null, end=null, unit=null, s
             return pts;
         }, [])
     })).filter(s => s.data.length > 0);
+}
+
+// The range boxes no longer describe what is on screen.
+function markRangeCustom() {
+    const presetEl = document.getElementById('presetSelect');
+    if (presetEl) presetEl.value = 'custom';
 }
 
 function buildChart(datasets, granularityInfo) {
@@ -221,8 +237,15 @@ function buildChart(datasets, granularityInfo) {
             plugins: {
                 decimation: { enabled: true, algorithm: 'lttb', samples: 1000 },
                 zoom: {
-                    pan: { enabled: true, mode: 'x' },
-                    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+                    // Zooming and panning move the view without touching the
+                    // range boxes. Marking the preset Custom keeps the dropdown
+                    // honest, and means picking a preset afterwards is a real
+                    // change event rather than a silent no-op.
+                    pan: { enabled: true, mode: 'x', onPanComplete: markRangeCustom },
+                    zoom: {
+                        wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x',
+                        onZoomComplete: markRangeCustom
+                    }
                 },
                 annotation: {
                     annotations: peak ? {
@@ -280,10 +303,16 @@ function buildChart(datasets, granularityInfo) {
                             month: 'MMM yyyy'
                         }
                     },
+                    // Pin the axis to the range that was asked for. Without this
+                    // Chart.js fits the axis to whatever came back, so a series
+                    // that only covers part of the range stretches to fill it and
+                    // the empty stretches either side vanish.
+                    min: granularityInfo && granularityInfo.min ? granularityInfo.min : undefined,
+                    max: granularityInfo && granularityInfo.max ? granularityInfo.max : undefined,
                     grid: { color: '#4e453a' },
                     ticks: { color: '#d4d4d4', font: { family: 'RuneScape' } }
                 },
-                y: { 
+                y: {
                     beginAtZero: true, 
                     grid: { color: '#4e453a' },
                     ticks: { color: '#d4d4d4', font: { family: 'RuneScape' } }
@@ -312,7 +341,7 @@ function showChartError(msg) {
 }
 
 function setControlsEnabled(enabled) {
-    const ids = ['applyRangeBtn','resetZoomBtn','granularitySelect','aggregationSelect','startInput','endInput','presetSelect', 'worldSelect', 'locationSelect', 'f2pSelect', 'compareSelect'];
+    const ids = ['applyRangeBtn','resetZoomBtn','granularitySelect','aggregationSelect','startInput','endInput','presetSelect', 'worldSelect', 'locationSelect', 'f2pSelect', 'activitySelect', 'compareSelect'];
     ids.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = !enabled;
@@ -363,6 +392,31 @@ function updateGranularityAvailability() {
     }
 }
 
+// Per-world tracking started long after the site's history does. Anything before
+// it is the imported weekly series, which is one site-wide number with no
+// world/region/type/activity breakdown, so every filter silently starts there
+// instead of where the range asked. Without this the chart looks broken.
+function filteredRangeNotice(startISO) {
+    const floor = globalMetadata.world_data_start;
+    if (!floor || !startISO || startISO >= floor) return '';
+    const shown = new Date(floor).toLocaleDateString([], {
+        year: 'numeric', month: 'short', day: 'numeric'
+    });
+    return `Filtered history begins ${shown}, when per-world tracking started. ` +
+           'Earlier data on this site is a site-wide total only.';
+}
+
+// Why a selection came back with nothing. Seasonal activities are the common
+// case: Leagues and the Deadman tiers ran for a while and then stopped, so they
+// are empty under the default 7d range even though the history is there.
+function emptyResultMessage(activityId) {
+    if (activityId) {
+        return 'No data for this activity in the selected range. Seasonal activities ' +
+               'run only for a period — try a wider range to find when it was live.';
+    }
+    return 'No data in the selected range.';
+}
+
 // Update chart using inputs (gracefully handle 400 responses from server)
 async function updateFromInputs() {
     const gran = document.getElementById('granularitySelect').value;
@@ -373,6 +427,7 @@ async function updateFromInputs() {
     const worldId = document.getElementById('worldSelect').value;
     const locationId = document.getElementById('locationSelect').value;
     const isF2p = document.getElementById('f2pSelect').value;
+    const activityId = document.getElementById('activitySelect').value;
     const compareMode = document.getElementById('compareSelect').value;
 
     const startISO = startVal ? new Date(startVal).toISOString() : null;
@@ -404,9 +459,10 @@ async function updateFromInputs() {
                 agg: agg,
                 world_id: worldId,
                 location_id: locationId,
-                is_f2p: isF2p
+                is_f2p: isF2p,
+                activity_id: activityId
             });
-            
+
             datasets = [{
                 label: 'Online Players',
                 data: history.map(p => ({ x: new Date(p.timestamp), y: p.count })),
@@ -419,8 +475,8 @@ async function updateFromInputs() {
             // We keep world/location filters if set.
             
             const [f2pData, memData] = await Promise.all([
-                fetchHistory({ start: startISO, end: endISO, unit, step, agg, world_id: worldId, location_id: locationId, is_f2p: 1 }),
-                fetchHistory({ start: startISO, end: endISO, unit, step, agg, world_id: worldId, location_id: locationId, is_f2p: 0 })
+                fetchHistory({ start: startISO, end: endISO, unit, step, agg, world_id: worldId, location_id: locationId, activity_id: activityId, is_f2p: 1 }),
+                fetchHistory({ start: startISO, end: endISO, unit, step, agg, world_id: worldId, location_id: locationId, activity_id: activityId, is_f2p: 0 })
             ]);
 
             datasets = [
@@ -445,7 +501,7 @@ async function updateFromInputs() {
             const series = await fetchGroupedHistory({
                 group_by: 'location',
                 start: startISO, end: endISO, unit, step, agg,
-                world_id: worldId, is_f2p: isF2p
+                world_id: worldId, is_f2p: isF2p, activity_id: activityId
             });
 
             datasets = series.map((s, idx) => ({
@@ -462,7 +518,8 @@ async function updateFromInputs() {
                 group_by: 'world',
                 start: startISO, end: endISO, unit, step, agg,
                 location_id: locationId,
-                is_f2p: isF2p
+                is_f2p: isF2p,
+                activity_id: activityId
             });
 
             datasets = series.map((s, idx) => ({
@@ -475,7 +532,20 @@ async function updateFromInputs() {
             }));
         }
 
-        buildChart(datasets, { unit, step });
+        // Every comparison mode reads world_data too, so they hit the same floor
+        // even with no filter set.
+        const filtered = worldId || locationId || isF2p !== "" || activityId
+                         || compareMode !== 'none';
+        if (datasets.every(ds => !ds.data || ds.data.length === 0)) {
+            showChartError(emptyResultMessage(activityId));
+        } else if (filtered) {
+            showChartError(filteredRangeNotice(startISO));
+        }
+        buildChart(datasets, {
+            unit, step,
+            min: startISO ? new Date(startISO).getTime() : null,
+            max: endISO ? new Date(endISO).getTime() : null
+        });
     } catch (err) {
         console.error('Update failed:', err);
         showChartError(err.message || 'Failed to load data');
@@ -533,8 +603,18 @@ async function initializePage() {
     // Ensure minute options availability reflects the default range
     updateGranularityAvailability();
 
-    // Wire up controls
-    document.getElementById('applyRangeBtn').addEventListener('click', updateFromInputs);
+    // Wire up controls. Apply recomputes the active preset rather than replaying
+    // the boxes: a preset means "last N from now", and picking the preset that is
+    // already showing fires no change event, so this is the only way to refresh
+    // one. Hand-edited boxes read as Custom and are used as-is.
+    document.getElementById('applyRangeBtn').addEventListener('click', () => {
+        const preset = document.getElementById('presetSelect');
+        if (preset && preset.value && preset.value !== 'custom') {
+            applyPreset(preset.value);
+        } else {
+            updateFromInputs();
+        }
+    });
     const presetEl = document.getElementById('presetSelect');
     if (presetEl) {
         // set default preset to Last 7d
@@ -551,6 +631,9 @@ async function initializePage() {
         if (this.value) {
             document.getElementById('locationSelect').value = "";
             document.getElementById('f2pSelect').value = "";
+            // A single world has exactly one activity, so combining the two
+            // yields either that world or nothing.
+            document.getElementById('activitySelect').value = "";
             document.getElementById('compareSelect').value = "none";
         }
         updateFromInputs();
@@ -558,6 +641,7 @@ async function initializePage() {
 
     document.getElementById('locationSelect').addEventListener('change', updateFromInputs);
     document.getElementById('f2pSelect').addEventListener('change', updateFromInputs);
+    document.getElementById('activitySelect').addEventListener('change', updateFromInputs);
     document.getElementById('compareSelect').addEventListener('change', updateFromInputs);
     document.getElementById('resetZoomBtn').addEventListener('click', () => { if (populationChart) populationChart.resetZoom(); });
     
