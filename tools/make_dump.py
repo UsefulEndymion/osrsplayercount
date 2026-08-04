@@ -31,9 +31,10 @@ import sys
 REPO = "UsefulEndymion/osrsplayercount"
 API = "https://api.github.com"
 
-# Refuse to publish if the newest release is younger than this. Stops a manual
-# run and the monthly scheduled task from double-publishing the same month.
-MIN_DAYS_BETWEEN_RELEASES = 20
+# Minimum age of the newest release before another one is due. PythonAnywhere
+# has no monthly schedule, so the task runs daily and skips until this elapses;
+# 28 makes that work out to roughly monthly.
+MIN_DAYS_BETWEEN_RELEASES = 28
 
 # VACUUM INTO landed in SQLite 3.27.
 MIN_SQLITE = (3, 27, 0)
@@ -377,8 +378,14 @@ def gh_headers(token):
     }
 
 
-def check_release_interval(token, force):
-    """Refuse to publish on top of a very recent release unless forced."""
+def check_release_interval(token, force, if_due):
+    """Guard against publishing on top of a release that is still recent.
+
+    Two callers with opposite needs. A person running this by hand wants a loud
+    error, since they meant to publish now. The scheduled task runs daily and
+    needs a quiet exit 0 -- anything else emails a failure report every day of
+    the month it is waiting.
+    """
     import requests
 
     resp = requests.get("%s/repos/%s/releases/latest" % (API, REPO),
@@ -396,9 +403,33 @@ def check_release_interval(token, force):
         tzinfo=dt.timezone.utc)
     age = (dt.datetime.now(dt.timezone.utc) - when).days
     log("  newest release is %d days old (%s)" % (age, published[:10]))
-    if age < MIN_DAYS_BETWEEN_RELEASES and not force:
-        die("newest release is only %d days old (minimum %d). Use --force to "
-            "override." % (age, MIN_DAYS_BETWEEN_RELEASES))
+    if age >= MIN_DAYS_BETWEEN_RELEASES or force:
+        return
+
+    if if_due:
+        log("Not due for %d more days. Nothing to do."
+            % (MIN_DAYS_BETWEEN_RELEASES - age))
+        sys.exit(0)
+    die("newest release is only %d days old (minimum %d). Use --force to "
+        "override." % (age, MIN_DAYS_BETWEEN_RELEASES))
+
+
+def read_token(args):
+    """Token from a file in preference to the environment.
+
+    A scheduled task's command line is visible in PythonAnywhere's task list and
+    in process listings, so the token should not be typed into it.
+    """
+    if args.token_file:
+        path = os.path.expanduser(args.token_file)
+        if not os.path.exists(path):
+            die("no token file at %s" % path)
+        with open(path) as fh:
+            token = fh.read().strip()
+        if not token:
+            die("token file %s is empty" % path)
+        return token
+    return os.environ.get("GITHUB_TOKEN")
 
 
 def publish(token, tag, title, body, assets, draft=False):
@@ -456,6 +487,15 @@ def main():
                         help="create the release as a draft: assets upload but "
                              "nothing is public and no tag is created until you "
                              "publish it. Use this to test the publish path.")
+    parser.add_argument("--token-file",
+                        help="read the GitHub token from this file instead of "
+                             "$GITHUB_TOKEN. Prefer this for scheduled tasks.")
+    parser.add_argument("--if-due", action="store_true",
+                        help="exit 0 without publishing when a release is not "
+                             "yet due. For scheduled tasks, which run daily.")
+    parser.add_argument("--keep-artifacts", action="store_true",
+                        help="keep the local asset files after a successful "
+                             "publish instead of deleting them")
     args = parser.parse_args()
 
     if sqlite3.sqlite_version_info < MIN_SQLITE:
@@ -470,10 +510,10 @@ def main():
     if not os.path.exists(db_path):
         die("no database at %s" % db_path)
 
-    token = os.environ.get("GITHUB_TOKEN")
+    token = read_token(args)
     if not args.dry_run and not token:
-        die("GITHUB_TOKEN is not set. Use --dry-run to build artifacts without "
-            "publishing.")
+        die("No token. Set GITHUB_TOKEN or pass --token-file. Use --dry-run to "
+            "build artifacts without publishing.")
 
     now = dt.datetime.now(dt.timezone.utc)
     date_str = now.strftime("%Y-%m-%d")
@@ -491,7 +531,7 @@ def main():
 
     if not args.dry_run:
         log("Checking release interval...")
-        check_release_interval(token, args.force)
+        check_release_interval(token, args.force, args.if_due)
 
     # The intermediate uncompressed snapshot is the expensive thing on a quota'd
     # host, so its removal goes in a finally -- a failed upload must not strand
@@ -566,6 +606,14 @@ def main():
 
     log("Publishing %s%s..." % (tag, " (draft)" if args.draft else ""))
     url = publish(token, tag, title, body, assets, draft=args.draft)
+
+    # GitHub now holds the only copies that matter. Left in place these would
+    # accumulate ~40 MB per run against a quota'd host.
+    if not args.keep_artifacts:
+        for _name, path, _digest in assets:
+            os.remove(path)
+        log("  removed local copies (--keep-artifacts to retain)")
+
     if args.draft:
         log("Draft created (not public, no tag yet): %s" % url)
         log("Publish it with:  gh release edit %s --draft=false" % tag)
