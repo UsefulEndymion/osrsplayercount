@@ -23,15 +23,23 @@ A comprehensive tool to track, store, and visualize Old School RuneScape (OSRS) 
 ## Installation
 
 1.  **Clone the repository** (or download the source).
-2.  **Create a virtual environment**:
+2.  **Create a virtual environment and install dependencies**:
+
+    Linux / macOS:
+    ```sh
+    python3 -m venv .venv
+    .venv/bin/pip install -r requirements.txt
+    ```
+
+    Windows (PowerShell):
     ```powershell
     python -m venv .venv
     .\.venv\Scripts\Activate.ps1
-    ```
-3.  **Install dependencies**:
-    ```powershell
     pip install -r requirements.txt
     ```
+
+Commands below assume the virtual environment is active. On Linux you can skip
+activating it by calling `.venv/bin/python` directly.
 
 ## Configuration
 
@@ -47,7 +55,7 @@ All configurable settings are located in `config.py`. You can adjust:
 ### 1. Start the Tracker
 The tracker runs in the background, scraping data and saving it to `osrs_data.db`.
 
-```powershell
+```sh
 python rs_tracker.py
 ```
 *   *Note: The database will be automatically created if it doesn't exist.*
@@ -55,10 +63,13 @@ python rs_tracker.py
 ### 2. Start the Web Server
 The API serves the dashboard and provides data endpoints.
 
-```powershell
+```sh
 python osrs_api.py
 ```
 *   Access the dashboard at: **http://127.0.0.1:5000**
+*   *Note: this entry point enables Flask's debug mode and is for local development
+    only. In production the app is loaded through WSGI, which imports `app` and never
+    runs this block.*
 
 ## API Documentation
 
@@ -88,6 +99,37 @@ Returns historical data points for graphing.
         *   `world_id`: Filter by specific world number.
         *   `location_id`: Filter by region ID.
         *   `is_f2p`: `1` for F2P, `0` for Members.
+*   When any filter is used, per-world data is queried and the range defaults to the
+    last 7 days if `start` is omitted. Unfiltered global queries have no such default.
+
+## Deployment
+
+The live site runs on [PythonAnywhere](https://www.pythonanywhere.com/). Two pieces run
+independently:
+
+*   **Web app** — loaded via a WSGI file that imports `app` from `osrs_api.py`. Flask's
+    `__main__` block is not used.
+*   **Tracker** — `rs_tracker.py` runs separately as an always-on task. Without it the
+    site serves stale data.
+
+Notes for anyone reproducing this setup:
+
+*   Map `/static/` in the Web tab so static files are served directly rather than
+    through Flask.
+*   The database is a single SQLite file alongside the code. `VACUUM INTO` (never `cp`)
+    is the safe way to snapshot it while the tracker is writing.
+*   Nothing about the application is host-specific; any WSGI host plus a scheduled
+    process for the tracker will work.
+
+## Data Dumps
+
+Full database snapshots are published as
+[GitHub Releases](https://github.com/UsefulEndymion/osrsplayercount/releases/latest),
+tagged `data-YYYY-MM-DD`. Each release carries the compressed SQLite database and a CSV
+of the global player-count series, along with row counts, checksums, and known caveats.
+
+`tools/make_dump.py` builds and publishes them; see `--help` for options, including
+`--dry-run` to build the assets without publishing.
 
 ## License
 
