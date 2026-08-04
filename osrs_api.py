@@ -121,6 +121,9 @@ def get_metadata():
     finally:
         conn.close()
 
+ISO_Z = '%Y-%m-%dT%H:%M:%SZ'
+
+
 def parse_iso(ts):
     """Parse an ISO timestamp, accepting a trailing Z. None if unparseable."""
     if not ts:
@@ -133,6 +136,15 @@ def parse_iso(ts):
             return datetime.strptime(ts2, '%Y-%m-%dT%H:%M:%S').replace(tzinfo=timezone.utc)
         except Exception:
             return None
+
+def iso_z(dt):
+    """Format for comparison against stored timestamps, which are all `...Z`.
+
+    isoformat() emits `...+00:00`, and '+' sorts below 'Z'.
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime(ISO_Z)
 
 
 def _bucket_exprs(unit, step, col):
@@ -160,8 +172,6 @@ def _bucket_exprs(unit, step, col):
 # native tracking began, and 5-minute samples in `players` after. `history_import`
 # names its statistic 'avg'/'peak'; the API's agg param says 'avg'/'max'.
 IMPORT_STAT = {'avg': 'avg', 'max': 'peak'}
-
-ISO_Z = '%Y-%m-%dT%H:%M:%SZ'
 
 
 def _import_end(conn):
@@ -191,10 +201,10 @@ def _imported_history(conn, start_dt, end_dt, unit, agg):
     # inside it, or a range landing mid-week would drop the week containing it.
     if start_dt:
         where.append('period_end > ?')
-        params.append(start_dt.strftime(ISO_Z))
+        params.append(iso_z(start_dt))
     if end_dt:
         where.append('period_start <= ?')
-        params.append(end_dt.strftime(ISO_Z))
+        params.append(iso_z(end_dt))
     where_str = 'WHERE ' + ' AND '.join(where)
 
     if unit == 'month':
@@ -274,9 +284,9 @@ def get_history_grouped():
         # Resolve the range to scrape_id bounds so this is a range scan over the
         # world_data PK, not a filter on se.timestamp. Same reasoning as get_history.
         lo = conn.execute('SELECT MIN(id) FROM scrape_events WHERE timestamp >= ?',
-                          (start_dt.isoformat(),)).fetchone()[0]
+                          (iso_z(start_dt),)).fetchone()[0]
         hi = conn.execute('SELECT MAX(id) FROM scrape_events WHERE timestamp <= ?',
-                          (end_dt.isoformat(),)).fetchone()[0]
+                          (iso_z(end_dt),)).fetchone()[0]
         if lo is None or hi is None:
             return jsonify({"timestamps": [], "series": []})
 
@@ -458,20 +468,29 @@ def get_history():
                 where_clauses.append("det.is_f2p = ?")
                 params.append(is_f2p)
 
+            # `limit` means "most recent N", which only applies when no range was given.
+            tail_request = start_dt is None and end_dt is None
+
+            # An unbounded range here has no scrape_id bounds to restrict to, so it
+            # scans all of world_data. Default to 7d, as /api/history/grouped does.
+            if start_dt is None:
+                end_dt = end_dt or datetime.now(timezone.utc)
+                start_dt = end_dt - timedelta(days=7)
+
             # Resolve the time range to a scrape_id range and filter on that instead
             # of se.timestamp. scrape_id is the world_data PK prefix, so this is a
             # range scan; filtering on se.timestamp makes SQLite scan all ~4M rows
             # and only then discard them (4800ms vs 10ms on a 7 day window).
             if start_dt:
                 lo = conn.execute('SELECT MIN(id) FROM scrape_events WHERE timestamp >= ?',
-                                  (start_dt.isoformat(),)).fetchone()[0]
+                                  (iso_z(start_dt),)).fetchone()[0]
                 if lo is None:
                     return jsonify([])
                 where_clauses.append("wd.scrape_id >= ?")
                 params.append(lo)
             if end_dt:
                 hi = conn.execute('SELECT MAX(id) FROM scrape_events WHERE timestamp <= ?',
-                                  (end_dt.isoformat(),)).fetchone()[0]
+                                  (iso_z(end_dt),)).fetchone()[0]
                 if hi is None:
                     return jsonify([])
                 where_clauses.append("wd.scrape_id <= ?")
@@ -491,7 +510,7 @@ def get_history():
                          f"FROM ({inner}) GROUP BY {bucket_group} ORDER BY timestamp ASC")
             else:
                 limit_clause = ""
-                if not start_dt and not end_dt and limit:
+                if tail_request and limit:
                     limit_clause = f"LIMIT {limit}"
                     order_by = "ORDER BY se.timestamp DESC"
                 query = f"{inner} {order_by} {limit_clause}"
@@ -534,10 +553,10 @@ def get_history():
 
             if start_dt:
                 where_clauses.append(f"{col_ts} >= ?")
-                params.append(start_dt.isoformat())
+                params.append(iso_z(start_dt))
             if end_dt:
                 where_clauses.append(f"{col_ts} <= ?")
-                params.append(end_dt.isoformat())
+                params.append(iso_z(end_dt))
 
             # Split the two eras at the end of imported coverage. Keeping this on the
             # native query as well as the imported one means the old weekly rows can
@@ -574,7 +593,7 @@ def get_history():
             # Prepend the imported era when the request actually reaches into it.
             # Skipped for the bare "last N samples" call, which is asking about now.
             if import_end and (buckets or start_dt or end_dt):
-                if not start_dt or start_dt.strftime(ISO_Z) < import_end:
+                if not start_dt or iso_z(start_dt) < import_end:
                     results = _imported_history(conn, start_dt, end_dt, unit, agg) + results
 
             return jsonify(results)

@@ -1,6 +1,8 @@
 @font-face {
     font-family: 'RuneScape';
     src: url('https://raw.githubusercontent.com/runelite/runelite/master/runelite-client/src/main/resources/net/runelite/client/ui/runescape.ttf');
+    /* Show fallback text immediately rather than blocking on a third-party fetch. */
+    font-display: swap;
 }
 
 /* Responsive Base Font Size */
