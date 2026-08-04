@@ -590,7 +590,8 @@ def main():
         (csv_name, csv_path, sha256(csv_path)),
     ]
     body = render_notes(date_str, stats, assets, csv_rows)
-    title = "OSRS player count data — %s" % date_str
+    # Date first so releases sort and scan by date in the GitHub releases list.
+    title = "%s — OSRS player count data" % date_str
 
     notes_path = os.path.join(out, "release-notes-%s.md" % date_str)
     with open(notes_path, "w", encoding="utf-8") as fh:
