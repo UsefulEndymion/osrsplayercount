@@ -1,6 +1,10 @@
 // Configuration
 const API_BASE = '';
 
+// The stored world number is what the server list calls it ("Old School 2");
+// the world people know is that plus 300.
+const WORLD_OFFSET = 300;
+
 // Collapsible About section
 document.addEventListener('DOMContentLoaded', function() {
     const toggleBtn = document.getElementById('about-toggle');
@@ -46,7 +50,7 @@ async function fetchMetadata() {
         data.worlds.forEach(w => {
             const opt = document.createElement('option');
             opt.value = w;
-            opt.textContent = `World ${parseInt(w) + 300}`;
+            opt.textContent = `World ${parseInt(w) + WORLD_OFFSET}`;
             worldSelect.appendChild(opt);
         });
 
@@ -98,7 +102,7 @@ function buildSeriesCatalog(data) {
     const worlds = (data.worlds || []).map(w => ({
         key: `w:${w}`,
         kind: 'world',
-        label: `World ${parseInt(w) + 300}`,
+        label: `World ${parseInt(w) + WORLD_OFFSET}`,
         params: { world_id: w }
     }));
     // Keyed by name, not by ids: the ids are autoincrement surrogates, and a
@@ -680,8 +684,228 @@ function emptyResultMessage(activityId) {
     return 'No data in the selected range.';
 }
 
+// ---------------------------------------------------------------------------
+// Shareable view URLs
+//
+// The URL mirrors the controls, not the canvas. Everything goes in as something
+// that survives a database rebuilt from scratch: a world is the number people
+// actually see (302, not the stored 2), a region and an activity are their
+// names. The ids behind those are autoincrement surrogates, and a grouped
+// activity's member ids change the day Jagex adds a sibling world.
+//
+// Zoom and pan are deliberately not encoded — they already move the view
+// without touching the range boxes, so there is no control state to mirror.
+// ---------------------------------------------------------------------------
+
+// Defaults are omitted from the URL, so an untouched view shares as a bare "/".
+const STATE_DEFAULTS = { range: '7d', gran: 'hour', agg: 'max' };
+
+// Readable stand-ins for the compare values, which are internal names.
+const COMPARE_PARAM = { type: 'type', location: 'regions', custom: 'series' };
+
+// Which params can only be resolved once /api/metadata has landed.
+const METADATA_PARAMS = ['world', 'region', 'activity', 'series'];
+
+function selectOption(id, predicate) {
+    const el = document.getElementById(id);
+    if (!el) return null;
+    return Array.from(el.options).find(predicate) || null;
+}
+
+function optionLabel(id) {
+    const el = document.getElementById(id);
+    const opt = el && el.selectedOptions[0];
+    return opt ? opt.textContent.trim() : '';
+}
+
+function seriesToken(item) {
+    return item.kind === 'world'
+        ? `w:${parseInt(item.params.world_id, 10) + WORLD_OFFSET}`
+        : `a:${item.label}`;
+}
+
+function seriesFromToken(token) {
+    if (token.startsWith('w:')) {
+        const n = parseInt(token.slice(2), 10);
+        if (!Number.isFinite(n)) return null;
+        return seriesCatalog.find(i => i.key === `w:${n - WORLD_OFFSET}`) || null;
+    }
+    if (token.startsWith('a:')) {
+        const want = token.slice(2).trim().toLowerCase();
+        return seriesCatalog.find(
+            i => i.kind === 'activity' && i.label.toLowerCase() === want) || null;
+    }
+    return null;
+}
+
+// A preset stays relative: "last 7d" should mean that to whoever opens the
+// link, not to whoever sent it. Hand-edited boxes are pinned to the absolute
+// instants they describe, so the recipient sees them in their own timezone.
+function appendRangeParams(params) {
+    const preset = document.getElementById('presetSelect').value;
+    if (preset && preset !== 'custom') {
+        if (preset !== STATE_DEFAULTS.range) params.set('range', preset);
+        return;
+    }
+    const startVal = document.getElementById('startInput').value;
+    const endVal = document.getElementById('endInput').value;
+    if (startVal) params.set('start', toShareISO(new Date(startVal)));
+    if (endVal) params.set('end', toShareISO(new Date(endVal)));
+}
+
+// Seconds, not milliseconds: the boxes only go to the minute anyway, and the
+// three extra digits are noise in a link someone has to paste somewhere.
+function toShareISO(date) {
+    return `${date.toISOString().slice(0, 19)}Z`;
+}
+
+function appendFilterParams(params) {
+    const compare = document.getElementById('compareSelect').value;
+    if (COMPARE_PARAM[compare]) params.set('compare', COMPARE_PARAM[compare]);
+
+    // The four filters are superseded in picker mode, so sharing them would
+    // hand the recipient controls that are disabled on arrival.
+    if (compare === 'custom') {
+        selectedSeries.forEach(item => params.append('series', seriesToken(item)));
+        return;
+    }
+
+    const world = document.getElementById('worldSelect').value;
+    if (world) params.set('world', String(parseInt(world, 10) + WORLD_OFFSET));
+    if (document.getElementById('locationSelect').value) {
+        params.set('region', optionLabel('locationSelect'));
+    }
+    const isF2p = document.getElementById('f2pSelect').value;
+    if (isF2p !== '') params.set('type', isF2p === '1' ? 'f2p' : 'members');
+    if (document.getElementById('activitySelect').value) {
+        params.set('activity', optionLabel('activitySelect'));
+    }
+}
+
+function currentViewParams() {
+    const params = new URLSearchParams();
+    appendRangeParams(params);
+    const gran = document.getElementById('granularitySelect').value;
+    if (gran !== STATE_DEFAULTS.gran) params.set('gran', gran);
+    const agg = document.getElementById('aggregationSelect').value;
+    if (agg !== STATE_DEFAULTS.agg) params.set('agg', agg);
+    appendFilterParams(params);
+    return params;
+}
+
+// replaceState, not pushState: every dropdown twiddle would otherwise become a
+// back-button entry. The bar is the whole interface — the link to share is
+// always the one already showing.
+function syncUrl() {
+    const query = currentViewParams().toString();
+    try {
+        window.history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : ''));
+    } catch (err) {
+        console.error('Could not update the URL:', err);
+    }
+}
+
+function applyRangeParams(params, ignored) {
+    const presetEl = document.getElementById('presetSelect');
+    const start = params.get('start');
+    const end = params.get('end');
+
+    if (start || end) {
+        const startDt = start ? new Date(start) : null;
+        const endDt = end ? new Date(end) : null;
+        if ((startDt && isNaN(startDt)) || (endDt && isNaN(endDt))) {
+            ignored.push('an unreadable date range');
+            return;
+        }
+        if (startDt) document.getElementById('startInput').value = toLocalInputISO(startDt);
+        if (endDt) document.getElementById('endInput').value = toLocalInputISO(endDt);
+        presetEl.value = 'custom';
+        return;
+    }
+
+    const range = params.get('range');
+    if (!range) return;
+    if (selectOption('presetSelect', o => o.value === range && o.value !== 'custom')) {
+        presetEl.value = range;
+        setPresetRange(range);
+    } else {
+        ignored.push(`the range "${range}"`);
+    }
+}
+
+function applySelectParam(id, params, name, toValue, ignored) {
+    const raw = params.get(name);
+    if (!raw) return;
+    const value = toValue(raw);
+    if (value !== null && selectOption(id, o => o.value === value)) {
+        document.getElementById(id).value = value;
+    } else {
+        ignored.push(`${name} "${raw}"`);
+    }
+}
+
+function applySeriesParams(params, ignored) {
+    const tokens = params.getAll('series');
+    if (tokens.length === 0) return;
+    selectedSeries = [];
+    tokens.forEach(token => {
+        const item = seriesFromToken(token);
+        if (!item) {
+            ignored.push(`series "${token}"`);
+        } else if (selectedSeries.length >= MAX_SERIES) {
+            ignored.push(`${item.label} (over the limit of ${MAX_SERIES})`);
+        } else if (!selectedSeries.some(s => s.key === item.key)) {
+            selectedSeries.push(item);
+        }
+    });
+}
+
+// Anything the link names that no longer exists here is dropped and reported;
+// the rest of the view still loads.
+function applyViewParams(params) {
+    const ignored = [];
+    applyRangeParams(params, ignored);
+    applySelectParam('granularitySelect', params, 'gran', v => v, ignored);
+    applySelectParam('aggregationSelect', params, 'agg', v => v, ignored);
+    applySelectParam('compareSelect', params, 'compare', v => {
+        const found = Object.keys(COMPARE_PARAM).find(k => COMPARE_PARAM[k] === v);
+        return found || null;
+    }, ignored);
+    applySelectParam('worldSelect', params, 'world', v => {
+        const n = parseInt(v, 10);
+        return Number.isFinite(n) ? String(n - WORLD_OFFSET) : null;
+    }, ignored);
+    applySelectParam('locationSelect', params, 'region', v => {
+        const opt = selectOption('locationSelect',
+            o => o.textContent.trim().toLowerCase() === v.trim().toLowerCase());
+        return opt ? opt.value : null;
+    }, ignored);
+    applySelectParam('f2pSelect', params, 'type', v => {
+        if (v === 'f2p') return '1';
+        if (v === 'members') return '0';
+        return null;
+    }, ignored);
+    applySelectParam('activitySelect', params, 'activity', v => {
+        const opt = selectOption('activitySelect',
+            o => o.textContent.trim().toLowerCase() === v.trim().toLowerCase());
+        return opt ? opt.value : null;
+    }, ignored);
+    applySeriesParams(params, ignored);
+    return ignored;
+}
+
+function showShareNotice(ignored) {
+    const el = document.getElementById('shareNotice');
+    if (!el || ignored.length === 0) return;
+    el.textContent = `This link asked for ${ignored.join(', ')}, which this site ` +
+                     'no longer has. Everything else in the link was applied.';
+    el.style.display = 'block';
+}
+
 // Update chart using inputs (gracefully handle 400 responses from server)
 async function updateFromInputs() {
+    syncUrl();
+
     const gran = document.getElementById('granularitySelect').value;
     const agg = document.getElementById('aggregationSelect').value;
     const startVal = document.getElementById('startInput').value;
@@ -830,7 +1054,9 @@ function setPresetYears(years) {
     document.getElementById('endInput').value = toLocalInputISO(end);
 }
 
-function applyPreset(v) {
+// Fill the range boxes from a preset without redrawing, so restoring a shared
+// link can set the range and fetch once rather than twice.
+function setPresetRange(v) {
     switch (v) {
         case '3h': setPresetHours(3); break;
         case '6h': setPresetHours(6); break;
@@ -843,6 +1069,10 @@ function applyPreset(v) {
         case '5y': setPresetYears(5); break;
         case '10y': setPresetYears(10); break;
     }
+}
+
+function applyPreset(v) {
+    setPresetRange(v);
     updateGranularityAvailability();
     updateFromInputs();
 }
@@ -911,10 +1141,8 @@ async function initializePage() {
         renderSeriesChips();
         updateFromInputs();
     });
-    renderSeriesChips();
-    syncCompareUI();
     document.getElementById('resetZoomBtn').addEventListener('click', () => { if (populationChart) populationChart.resetZoom(); });
-    
+
     // Recalculate availability when user edits start/end inputs
     const onInputChange = () => {
         updateGranularityAvailability();
@@ -923,9 +1151,19 @@ async function initializePage() {
     document.getElementById('startInput').addEventListener('change', onInputChange);
     document.getElementById('endInput').addEventListener('change', onInputChange);
 
-    // Independent on first load: compare mode starts at 'none', and the selects
-    // fetchMetadata populates keep their static value="" option selected.
-    await Promise.all([fetchMetadata(), fetchLatest(), updateFromInputs()]);
+    // A shared link naming a world, region, activity or series can only be
+    // restored once the option lists exist, so those wait on metadata. Every
+    // other link, including a plain load, still fires all three together.
+    const params = new URLSearchParams(window.location.search);
+    const metadata = fetchMetadata();
+    if (METADATA_PARAMS.some(name => params.has(name))) await metadata;
+
+    showShareNotice(applyViewParams(params));
+    updateGranularityAvailability();
+    renderSeriesChips();
+    syncCompareUI();
+
+    await Promise.all([metadata, fetchLatest(), updateFromInputs()]);
 
     // Auto-refresh every 2 minutes
     setInterval(async () => {

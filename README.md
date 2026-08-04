@@ -14,6 +14,7 @@ A comprehensive tool to track, store, and visualize Old School RuneScape (OSRS) 
     *   Historical graphs with zoom and pan capabilities.
     *   **Advanced Filtering**: Filter history by World, Region (Location), World Type (F2P/Members), or Activity.
     *   **Comparison Mode**: Compare F2P vs Members, compare Regions side-by-side, or pick up to 8 specific worlds and activities to plot together.
+    *   **Shareable Links**: The URL tracks the current view, so copying it from the address bar hands someone the exact filters, comparison, granularity and range you are looking at. A preset range stays relative ("last 7d"); a hand-typed range is shared as the absolute instants it covers.
 
 ## Requirements
 
