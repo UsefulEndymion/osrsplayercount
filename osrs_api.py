@@ -121,6 +121,9 @@ def get_metadata():
     finally:
         conn.close()
 
+ISO_Z = '%Y-%m-%dT%H:%M:%SZ'
+
+
 def parse_iso(ts):
     """Parse an ISO timestamp, accepting a trailing Z. None if unparseable."""
     if not ts:
@@ -133,6 +136,21 @@ def parse_iso(ts):
             return datetime.strptime(ts2, '%Y-%m-%dT%H:%M:%S').replace(tzinfo=timezone.utc)
         except Exception:
             return None
+
+def iso_z(dt):
+    """Render a datetime the way the DB stores timestamps: 2026-08-04T17:02:24Z.
+
+    Every timestamp column (players, scrape_events, history_import) is `...Z`, and
+    the range filters are string comparisons. datetime.isoformat() emits
+    `...+00:00`, and '+' sorts below 'Z', so a row landing exactly on `end` was
+    excluded by `<= ?`. Always use this for a value compared against a stored
+    timestamp.
+    """
+    # Naive means UTC here, same as parse_iso assumes. astimezone() would otherwise
+    # read it as system local time and shift it.
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime(ISO_Z)
 
 
 def _bucket_exprs(unit, step, col):
@@ -160,8 +178,6 @@ def _bucket_exprs(unit, step, col):
 # native tracking began, and 5-minute samples in `players` after. `history_import`
 # names its statistic 'avg'/'peak'; the API's agg param says 'avg'/'max'.
 IMPORT_STAT = {'avg': 'avg', 'max': 'peak'}
-
-ISO_Z = '%Y-%m-%dT%H:%M:%SZ'
 
 
 def _import_end(conn):
@@ -191,10 +207,10 @@ def _imported_history(conn, start_dt, end_dt, unit, agg):
     # inside it, or a range landing mid-week would drop the week containing it.
     if start_dt:
         where.append('period_end > ?')
-        params.append(start_dt.strftime(ISO_Z))
+        params.append(iso_z(start_dt))
     if end_dt:
         where.append('period_start <= ?')
-        params.append(end_dt.strftime(ISO_Z))
+        params.append(iso_z(end_dt))
     where_str = 'WHERE ' + ' AND '.join(where)
 
     if unit == 'month':
@@ -274,9 +290,9 @@ def get_history_grouped():
         # Resolve the range to scrape_id bounds so this is a range scan over the
         # world_data PK, not a filter on se.timestamp. Same reasoning as get_history.
         lo = conn.execute('SELECT MIN(id) FROM scrape_events WHERE timestamp >= ?',
-                          (start_dt.isoformat(),)).fetchone()[0]
+                          (iso_z(start_dt),)).fetchone()[0]
         hi = conn.execute('SELECT MAX(id) FROM scrape_events WHERE timestamp <= ?',
-                          (end_dt.isoformat(),)).fetchone()[0]
+                          (iso_z(end_dt),)).fetchone()[0]
         if lo is None or hi is None:
             return jsonify({"timestamps": [], "series": []})
 
@@ -464,14 +480,14 @@ def get_history():
             # and only then discard them (4800ms vs 10ms on a 7 day window).
             if start_dt:
                 lo = conn.execute('SELECT MIN(id) FROM scrape_events WHERE timestamp >= ?',
-                                  (start_dt.isoformat(),)).fetchone()[0]
+                                  (iso_z(start_dt),)).fetchone()[0]
                 if lo is None:
                     return jsonify([])
                 where_clauses.append("wd.scrape_id >= ?")
                 params.append(lo)
             if end_dt:
                 hi = conn.execute('SELECT MAX(id) FROM scrape_events WHERE timestamp <= ?',
-                                  (end_dt.isoformat(),)).fetchone()[0]
+                                  (iso_z(end_dt),)).fetchone()[0]
                 if hi is None:
                     return jsonify([])
                 where_clauses.append("wd.scrape_id <= ?")
@@ -534,10 +550,10 @@ def get_history():
 
             if start_dt:
                 where_clauses.append(f"{col_ts} >= ?")
-                params.append(start_dt.isoformat())
+                params.append(iso_z(start_dt))
             if end_dt:
                 where_clauses.append(f"{col_ts} <= ?")
-                params.append(end_dt.isoformat())
+                params.append(iso_z(end_dt))
 
             # Split the two eras at the end of imported coverage. Keeping this on the
             # native query as well as the imported one means the old weekly rows can
@@ -574,7 +590,7 @@ def get_history():
             # Prepend the imported era when the request actually reaches into it.
             # Skipped for the bare "last N samples" call, which is asking about now.
             if import_end and (buckets or start_dt or end_dt):
-                if not start_dt or start_dt.strftime(ISO_Z) < import_end:
+                if not start_dt or iso_z(start_dt) < import_end:
                     results = _imported_history(conn, start_dt, end_dt, unit, agg) + results
 
             return jsonify(results)
