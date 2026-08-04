@@ -686,7 +686,7 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// Easter Egg: Play sound after 20 minutes
+// Easter Egg: Play sound after 60 minutes
 setTimeout(() => {
     const audio = new Audio('https://oldschool.runescape.wiki/images/Armadyl_Eye_sound.ogg?37997');
     audio.volume = 0.5;
