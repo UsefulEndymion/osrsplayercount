@@ -158,11 +158,6 @@ def collect_stats(path):
                 "SELECT stat, MAX(period_start) hi FROM history_import GROUP BY stat")
         }
 
-        # The 2000 sentinel: rs_tracker maps any unparseable world count to 2000,
-        # which is also what a genuinely full world reports. Quantify it so the
-        # release notes can be honest about the ambiguity rather than hand-wave.
-        stats["sentinel"] = conn.execute(
-            "SELECT COUNT(*) FROM world_data WHERE player_count = 2000").fetchone()[0]
         return stats
     finally:
         conn.close()
@@ -193,10 +188,6 @@ def build_meta_rows(generated_at, stats):
          "%s..%s native ~5-minute global samples plus ~30-minute per-world "
          "scrapes, tables players + world_data"
          % (stats["worlds_range"][0], stats["worlds_range"][1])),
-        ("caveat_full_worlds",
-         "world_data.player_count = 2000 means either a genuinely full world or "
-         "a count that failed to parse; the two are not distinguishable. "
-         "%d rows affected." % stats["sentinel"]),
         ("caveat_retired_worlds",
          "There is no worlds dimension table, so worlds retired by Jagex are "
          "not distinguishable from live ones."),
@@ -318,17 +309,10 @@ def render_notes(date_str, stats, assets, csv_rows):
     for table in COUNTED_TABLES:
         lines.append("| `%s` | %s |" % (table, "{:,}".format(counts[table])))
 
-    sentinel_pct = 100.0 * stats["sentinel"] / max(counts["world_data"], 1)
     lines += [
         "",
         "## Known caveats",
         "",
-        "- **`player_count = 2000` is ambiguous.** The tracker maps any count it "
-        "cannot parse to 2000, which is also what a genuinely full world reports. "
-        "The two are not distinguishable after the fact. Affects %s rows (%.2f%% of "
-        "`world_data`); most appear to be real full-world readings, since they "
-        "concentrate in a handful of consistently busy worlds."
-        % ("{:,}".format(stats["sentinel"]), sentinel_pct),
         "- **Retired worlds are not flagged.** There is no `worlds` dimension table, "
         "so worlds Jagex has since removed look identical to live ones.",
         "- **Activity names are not de-duplicated.** Variants like `Castle Wars 1` / "
