@@ -16,6 +16,7 @@ osrs_data.db-shm
 osrs_data.db-wal
 *.db
 *.sqlite3
+*.db.bak
 
 # Logs and misc
 *.log

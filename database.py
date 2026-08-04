@@ -82,6 +82,20 @@ def init_db():
         ) WITHOUT ROWID
     ''')
 
+    # Pre-aggregated history imported from elsewhere, kept out of `players` so that
+    # table stays raw samples only. One row per (period, statistic, source), so an
+    # avg and a peak series coexist against the same period_start.
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS history_import (
+            period_start DATETIME,
+            period_end   DATETIME,
+            stat         TEXT,
+            count        INTEGER,
+            source       TEXT,
+            PRIMARY KEY (period_start, stat, source)
+        )
+    ''')
+
     # Create indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON players(timestamp);")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_scrape_timestamp ON scrape_events(timestamp);")
