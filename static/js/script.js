@@ -290,10 +290,16 @@ function buildChart(datasets, granularityInfo) {
                             month: 'MMM yyyy'
                         }
                     },
+                    // Pin the axis to the range that was asked for. Without this
+                    // Chart.js fits the axis to whatever came back, so a series
+                    // that only covers part of the range stretches to fill it and
+                    // the empty stretches either side vanish.
+                    min: granularityInfo && granularityInfo.min ? granularityInfo.min : undefined,
+                    max: granularityInfo && granularityInfo.max ? granularityInfo.max : undefined,
                     grid: { color: '#4e453a' },
                     ticks: { color: '#d4d4d4', font: { family: 'RuneScape' } }
                 },
-                y: { 
+                y: {
                     beginAtZero: true, 
                     grid: { color: '#4e453a' },
                     ticks: { color: '#d4d4d4', font: { family: 'RuneScape' } }
@@ -371,6 +377,20 @@ function updateGranularityAvailability() {
         Array.from(select.options).forEach(opt => { if (opt.value.endsWith('m')) opt.disabled = false; });
             // Tooltip text is static and does not change
     }
+}
+
+// Per-world tracking started long after the site's history does. Anything before
+// it is the imported weekly series, which is one site-wide number with no
+// world/region/type/activity breakdown, so every filter silently starts there
+// instead of where the range asked. Without this the chart looks broken.
+function filteredRangeNotice(startISO) {
+    const floor = globalMetadata.world_data_start;
+    if (!floor || !startISO || startISO >= floor) return '';
+    const shown = new Date(floor).toLocaleDateString([], {
+        year: 'numeric', month: 'short', day: 'numeric'
+    });
+    return `Filtered history begins ${shown}, when per-world tracking started. ` +
+           'Earlier data on this site is a site-wide total only.';
 }
 
 // Why a selection came back with nothing. Seasonal activities are the common
@@ -499,10 +519,20 @@ async function updateFromInputs() {
             }));
         }
 
+        // Every comparison mode reads world_data too, so they hit the same floor
+        // even with no filter set.
+        const filtered = worldId || locationId || isF2p !== "" || activityId
+                         || compareMode !== 'none';
         if (datasets.every(ds => !ds.data || ds.data.length === 0)) {
             showChartError(emptyResultMessage(activityId));
+        } else if (filtered) {
+            showChartError(filteredRangeNotice(startISO));
         }
-        buildChart(datasets, { unit, step });
+        buildChart(datasets, {
+            unit, step,
+            min: startISO ? new Date(startISO).getTime() : null,
+            max: endISO ? new Date(endISO).getTime() : null
+        });
     } catch (err) {
         console.error('Update failed:', err);
         showChartError(err.message || 'Failed to load data');

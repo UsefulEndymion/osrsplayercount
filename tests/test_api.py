@@ -405,6 +405,11 @@ class MetadataTest(ApiTestCase):
                          ['Germany', 'United States'])
         self.assertEqual(sorted(body['worlds']), [301, 302, 303, 304])
 
+    def test_world_data_start_is_the_first_scrape(self):
+        # The floor the UI warns about: filtered queries cannot reach earlier.
+        _, body = self.get('/api/metadata')
+        self.assertEqual(body['world_data_start'], SCRAPE_TIMES[0])
+
     def test_activities_stay_raw(self):
         _, body = self.get('/api/metadata')
         self.assertEqual(sorted(a['description'] for a in body['activities']),

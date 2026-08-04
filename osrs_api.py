@@ -105,6 +105,12 @@ def get_metadata():
         # Get Activities
         activities = conn.execute('SELECT id, description FROM activities ORDER BY description').fetchall()
 
+        # The floor on every filtered query. Before this the only history is the
+        # imported weekly series, which is site-wide with no per-world breakdown,
+        # so any filter silently starts here rather than where the user asked.
+        world_data_start = conn.execute(
+            'SELECT MIN(timestamp) FROM scrape_events').fetchone()[0]
+
         # Loose index scan over idx_world_number: one seek per world instead of
         # walking ~4M rows. Not SELECT DISTINCT, which is ~215ms here vs ~2ms.
         worlds = conn.execute('''
@@ -128,7 +134,8 @@ def get_metadata():
             # wants the second; anything reading the source strings wants the first.
             "activity_groups": group_activities(
                 (row['id'], row['description']) for row in activities),
-            "worlds": [row['world_number'] for row in worlds]
+            "worlds": [row['world_number'] for row in worlds],
+            "world_data_start": world_data_start
         })
     finally:
         conn.close()
