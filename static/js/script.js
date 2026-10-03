@@ -5,6 +5,16 @@ const API_BASE = '';
 // the world people know is that plus 300.
 const WORLD_OFFSET = 300;
 
+// Granularities the API returns as bare "YYYY-MM-DD" calendar dates.
+const DATE_UNITS = ['day', 'week', 'month'];
+
+// new Date() reads a bare date as UTC midnight, which lands on the previous day
+// anywhere west of UTC, so bare dates are placed at local midnight instead.
+function parseTimestamp(ts) {
+    const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ts);
+    return date ? new Date(+date[1], date[2] - 1, +date[3]) : new Date(ts);
+}
+
 // Collapsible About and Outages sections
 function wireToggle(buttonId, contentId, showLabel, hideLabel) {
     const toggleBtn = document.getElementById(buttonId);
@@ -312,7 +322,7 @@ function seriesLabel(result) {
 function customDatasets(results) {
     return results.map((result, idx) => ({
         label: seriesLabel(result),
-        data: result.data.map(p => ({ x: new Date(p.timestamp), y: p.count })),
+        data: result.data.map(p => ({ x: parseTimestamp(p.timestamp), y: p.count })),
         borderColor: SERIES_COLORS[idx],
         backgroundColor: null
     }));
@@ -439,7 +449,7 @@ async function fetchGroupedHistory({group_by, start=null, end=null, unit=null, s
     }
 
     const payload = await response.json();
-    const times = payload.timestamps.map(t => new Date(t));
+    const times = payload.timestamps.map(parseTimestamp);
     return payload.series.map(s => ({
         key: s.key,
         data: s.counts.reduce((pts, c, i) => {
@@ -499,7 +509,7 @@ function buildChart(datasets, granularityInfo) {
     if (Array.isArray(datasets) && datasets.length > 0 && datasets[0].timestamp) {
         datasets = [{
             label: 'Online Players',
-            data: datasets.map(p => ({ x: new Date(p.timestamp), y: p.count })),
+            data: datasets.map(p => ({ x: parseTimestamp(p.timestamp), y: p.count })),
             borderColor: '#ffff00',
             backgroundColor: 'rgba(255, 255, 0, 0.1)'
         }];
@@ -586,8 +596,12 @@ function buildChart(datasets, granularityInfo) {
                     callbacks: {
                         title: function(context) {
                             if (!context.length) return '';
-                            const d = context[0].parsed.x;
-                            return new Date(d).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+                            const d = new Date(context[0].parsed.x);
+                            const date = { year: 'numeric', month: 'short', day: 'numeric' };
+                            if (granularityInfo && DATE_UNITS.includes(granularityInfo.unit)) {
+                                return d.toLocaleDateString([], date);
+                            }
+                            return d.toLocaleString([], { ...date, hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
                         },
                         label: function(context) {
                             return `${context.dataset.label}: ${context.parsed.y.toLocaleString()}`;
@@ -992,7 +1006,7 @@ async function updateFromInputs() {
 
             datasets = [{
                 label: 'Online Players',
-                data: history.map(p => ({ x: new Date(p.timestamp), y: p.count })),
+                data: history.map(p => ({ x: parseTimestamp(p.timestamp), y: p.count })),
                 borderColor: '#ffff00',
                 backgroundColor: 'rgba(255, 255, 0, 0.1)'
             }];
@@ -1009,13 +1023,13 @@ async function updateFromInputs() {
             datasets = [
                 {
                     label: 'Free-to-Play',
-                    data: f2pData.map(p => ({ x: new Date(p.timestamp), y: p.count })),
+                    data: f2pData.map(p => ({ x: parseTimestamp(p.timestamp), y: p.count })),
                     borderColor: '#aaaaaa', // Silver/Grey for F2P
                     backgroundColor: 'rgba(170, 170, 170, 0.1)'
                 },
                 {
                     label: 'Members',
-                    data: memData.map(p => ({ x: new Date(p.timestamp), y: p.count })),
+                    data: memData.map(p => ({ x: parseTimestamp(p.timestamp), y: p.count })),
                     borderColor: '#ffff00', // Gold for Members
                     backgroundColor: 'rgba(255, 255, 0, 0.1)'
                 }
