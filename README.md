@@ -111,7 +111,7 @@ Reports whether the tracker is still saving data.
     alert line. The body says which.
 *   The disk check runs only when the `DISK_QUOTA_MB` environment variable is set. It adds
     up home and `/tmp` (what PythonAnywhere's quota counts) at most every 10 minutes, and
-    fails past 80% of the quota.
+    fails past 50% of the quota.
 
 ## Deployment
 

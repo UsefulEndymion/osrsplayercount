@@ -25,6 +25,6 @@ WORLD_DATA_MAX_AGE = 3 * WORLD_SCRAPE_INTERVAL  # 90 minutes
 # Disk check in /api/health. Off unless DISK_QUOTA_MB is set in the environment,
 # because it walks every path below. PythonAnywhere's quota counts home and /tmp.
 DISK_QUOTA_MB = int(os.environ.get('DISK_QUOTA_MB', 0))
-DISK_ALERT_FRACTION = 0.8
+DISK_ALERT_FRACTION = 0.5
 DISK_USAGE_PATHS = [os.path.expanduser('~'), '/tmp']
 DISK_CHECK_INTERVAL = 600  # 10 minutes
