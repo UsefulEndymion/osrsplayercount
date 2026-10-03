@@ -12,6 +12,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 
 import database
 
@@ -177,6 +178,14 @@ class HistoryGlobalTest(ApiTestCase):
             '/api/history?unit=hour&agg=avg&start=2026-01-05T00:00:00Z&end=2026-01-05T23:59:59Z')
         # (1000+1100+1200)/3 = 1100, (1300+1400)/2 = 1350
         self.assertEqual([r['count'] for r in body], [1100, 1350])
+
+    def test_minute_buckets_are_utc_iso_like_hourly(self):
+        _, body = self.get(
+            '/api/history?unit=minute&step=30&start=2026-01-05T00:00:00Z&end=2026-01-05T23:59:59Z')
+        self.assertEqual(body, [
+            {'timestamp': '2026-01-05T00:00:00Z', 'count': 1200},
+            {'timestamp': '2026-01-05T01:00:00Z', 'count': 1400},
+        ])
 
     def test_range_filters_are_inclusive(self):
         _, body = self.get('/api/history?start=2026-01-05T00:10:00Z&end=2026-01-05T01:00:00Z')
@@ -421,6 +430,125 @@ class MetadataTest(ApiTestCase):
             {'name': 'Castle Wars', 'ids': [2, 3]},
             {'name': 'Guardians of the Rift', 'ids': [4]},
         ])
+
+
+class HealthTest(ApiTestCase):
+    """/api/health. The fixture's rows are months old, so it is stale as built."""
+
+    def test_stale_data_is_unhealthy(self):
+        status, body = self.get('/api/health')
+        self.assertEqual(status, 503)
+        self.assertFalse(body['ok'])
+        self.assertFalse(body['checks']['players']['ok'])
+        self.assertFalse(body['checks']['world_data']['ok'])
+        self.assertEqual(body['checks']['players']['newest'], SCRAPE_TIMES[-1])
+
+    def test_fresh_data_is_healthy(self):
+        now = self.osrs_api.iso_z(datetime.now(timezone.utc))
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('INSERT INTO players (id, timestamp, count) VALUES (999, ?, 1)', (now,))
+        conn.execute('INSERT INTO scrape_events (id, timestamp) VALUES (999, ?)', (now,))
+        conn.commit()
+        conn.close()
+        self.addCleanup(self._delete_fresh_rows)
+
+        status, body = self.get('/api/health')
+        self.assertEqual(status, 200)
+        self.assertTrue(body['ok'])
+
+    def _delete_fresh_rows(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('DELETE FROM players WHERE id = 999')
+        conn.execute('DELETE FROM scrape_events WHERE id = 999')
+        conn.commit()
+        conn.close()
+
+    def test_unreadable_database_is_unhealthy(self):
+        bad_path = os.path.join(self._tmp.name, 'malformed.db')
+        with open(bad_path, 'wb') as fh:
+            fh.write(b'not a database' * 1024)
+        database.DB_PATH = bad_path
+        self.addCleanup(setattr, database, 'DB_PATH', self.db_path)
+
+        status, body = self.get('/api/health')
+        self.assertEqual(status, 503)
+        self.assertFalse(body['ok'])
+        self.assertIn('error', body)
+
+    def test_age_at_the_limit_is_still_fresh(self):
+        now = datetime(2026, 1, 1, 0, 30, tzinfo=timezone.utc)
+        self.assertTrue(self.osrs_api.freshness('2026-01-01T00:00:00Z', 1800, now)['ok'])
+        self.assertFalse(self.osrs_api.freshness('2026-01-01T00:00:00Z', 1799, now)['ok'])
+
+    def test_empty_table_is_unhealthy(self):
+        check = self.osrs_api.freshness(None, 1800, datetime.now(timezone.utc))
+        self.assertFalse(check['ok'])
+        self.assertIsNone(check['age_seconds'])
+
+
+MIB = 1024 * 1024
+
+
+def write_mib(path, n):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'wb') as fh:
+        fh.write(os.urandom(n * MIB))
+
+
+class DiskHealthTest(ApiTestCase):
+    """The disk check in /api/health, measured over a temp dir instead of home and /tmp."""
+
+    def setUp(self):
+        super().setUp()
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.root = os.path.join(self._dir.name, 'home')
+        write_mib(os.path.join(self.root, 'nested', 'data.bin'), 2)
+
+    def configure(self, quota_mb):
+        api = self.osrs_api
+        for name, value in (('DISK_QUOTA_MB', quota_mb), ('DISK_USAGE_PATHS', [self.root])):
+            self.addCleanup(setattr, api, name, getattr(api, name))
+            setattr(api, name, value)
+        api._disk_cache.update(at=None, used=0)
+        self.addCleanup(api._disk_cache.update, at=None, used=0)
+
+    def test_off_without_a_quota(self):
+        self.configure(0)
+        _, body = self.get('/api/health')
+        self.assertNotIn('disk', body['checks'])
+
+    def test_usage_past_the_alert_line_is_unhealthy(self):
+        self.configure(2)
+        status, body = self.get('/api/health')
+        self.assertEqual(status, 503)
+        self.assertFalse(body['checks']['disk']['ok'])
+        self.assertGreaterEqual(body['checks']['disk']['used_mb'], 2)
+
+    def test_usage_under_the_alert_line_is_ok(self):
+        self.configure(10_000)
+        _, body = self.get('/api/health')
+        self.assertTrue(body['checks']['disk']['ok'])
+
+    def test_usage_counts_nested_files_but_not_symlink_targets(self):
+        outside = os.path.join(self._dir.name, 'outside')
+        write_mib(os.path.join(outside, 'big.bin'), 8)
+        os.symlink(outside, os.path.join(self.root, 'link'))
+
+        used = self.osrs_api.disk_used_bytes([self.root])
+        self.assertGreaterEqual(used, 2 * MIB)
+        self.assertLess(used, 8 * MIB)
+
+    def test_measurement_is_reused_until_the_interval_passes(self):
+        self.configure(10_000)
+        now = datetime.now(timezone.utc)
+        first = self.osrs_api.disk_check(now)['used_mb']
+        write_mib(os.path.join(self.root, 'more.bin'), 3)
+
+        within = now + timedelta(seconds=self.osrs_api.DISK_CHECK_INTERVAL)
+        self.assertEqual(self.osrs_api.disk_check(within)['used_mb'], first)
+        after = within + timedelta(seconds=1)
+        self.assertGreaterEqual(self.osrs_api.disk_check(after)['used_mb'], first + 3)
 
 
 if __name__ == '__main__':

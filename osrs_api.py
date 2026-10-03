@@ -7,7 +7,8 @@ from datetime import datetime, timedelta, timezone
 import logging
 
 from activities import group_activities
-from config import BASE_DIR
+from config import (BASE_DIR, PLAYERS_MAX_AGE, WORLD_DATA_MAX_AGE, DISK_QUOTA_MB,
+                    DISK_ALERT_FRACTION, DISK_USAGE_PATHS, DISK_CHECK_INTERVAL)
 from database import get_db_connection
 
 # Configure Logging
@@ -173,7 +174,8 @@ def _bucket_exprs(unit, step, col):
     or unrecognised, in which case the caller should return raw rows."""
     if unit == 'minute':
         secs = (step if step else 5) * 60
-        return (f"datetime((strftime('%s', {col}) / {secs}) * {secs}, 'unixepoch')",
+        # The Z matters: browsers read a bare "YYYY-MM-DD HH:MM:SS" as local time.
+        return (f"strftime('%Y-%m-%dT%H:%M:%SZ', (strftime('%s', {col}) / {secs}) * {secs}, 'unixepoch')",
                 f"(strftime('%s', {col}) / {secs})")
     if unit == 'hour':
         return (f"strftime('%Y-%m-%dT%H:00:00Z', {col})", f"strftime('%Y-%m-%dT%H', {col})")
@@ -683,6 +685,91 @@ def get_history():
         return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
+
+
+def freshness(newest_ts, max_age, now):
+    """One series' health: the age of its newest row against its limit."""
+    newest = parse_iso(newest_ts)
+    age = int((now - newest).total_seconds()) if newest else None
+    return {
+        "newest": newest_ts,
+        "age_seconds": age,
+        "max_age_seconds": max_age,
+        "ok": age is not None and age <= max_age,
+    }
+
+
+def disk_used_bytes(paths):
+    """Space used under `paths` as du counts it: allocated blocks, symlinks not followed."""
+    total = 0
+    stack = list(paths)
+    while stack:
+        try:
+            entries = list(os.scandir(stack.pop()))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(entry.path)
+                total += entry.stat(follow_symlinks=False).st_blocks * 512
+            except OSError:
+                continue  # temp files can vanish mid-walk
+    return total
+
+
+# Per worker process. The walk takes a while on network storage, and the monitor
+# polls far more often than disk usage changes.
+_disk_cache = {"at": None, "used": 0}
+
+
+def disk_check(now):
+    """Usage against the quota, or None when no quota is configured."""
+    if not DISK_QUOTA_MB:
+        return None
+    if _disk_cache["at"] is None or (now - _disk_cache["at"]).total_seconds() > DISK_CHECK_INTERVAL:
+        _disk_cache.update(at=now, used=disk_used_bytes(DISK_USAGE_PATHS))
+    used_mb = _disk_cache["used"] // (1024 * 1024)
+    alert_at_mb = int(DISK_QUOTA_MB * DISK_ALERT_FRACTION)
+    return {
+        "used_mb": used_mb,
+        "quota_mb": DISK_QUOTA_MB,
+        "alert_at_mb": alert_at_mb,
+        "measured_at": iso_z(_disk_cache["at"]),
+        "ok": used_mb < alert_at_mb,
+    }
+
+
+@app.route('/api/health')
+def health():
+    """200 while the tracker is saving both series and the disk has room, 503 otherwise.
+
+    For an external uptime monitor. A dead tracker, a database it can't write,
+    a database the site can't read and a nearly full disk all end up here as a 503.
+    """
+    try:
+        conn = get_db_connection()
+        try:
+            players = conn.execute(
+                'SELECT timestamp FROM players ORDER BY id DESC LIMIT 1').fetchone()
+            scrape = conn.execute(
+                'SELECT timestamp FROM scrape_events ORDER BY id DESC LIMIT 1').fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        logger.error(f"Health check could not read the database: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 503
+
+    now = datetime.now(timezone.utc)
+    checks = {
+        "players": freshness(players['timestamp'] if players else None, PLAYERS_MAX_AGE, now),
+        "world_data": freshness(scrape['timestamp'] if scrape else None, WORLD_DATA_MAX_AGE, now),
+    }
+    disk = disk_check(now)
+    if disk:
+        checks["disk"] = disk
+    ok = all(check['ok'] for check in checks.values())
+    return jsonify({"ok": ok, "checks": checks}), 200 if ok else 503
 
 
 if __name__ == '__main__':

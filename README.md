@@ -103,6 +103,16 @@ Returns historical data points for graphing.
 *   When any filter is used, per-world data is queried and the range defaults to the
     last 7 days if `start` is omitted. Unfiltered global queries have no such default.
 
+### `GET /api/health`
+Reports whether the tracker is still saving data.
+*   **200** when the newest global sample is under 30 minutes old and the newest world
+    scrape is under 90 minutes old (`PLAYERS_MAX_AGE` / `WORLD_DATA_MAX_AGE` in `config.py`).
+*   **503** when either is older, the database can't be read, or disk usage is past the
+    alert line. The body says which.
+*   The disk check runs only when the `DISK_QUOTA_MB` environment variable is set. It adds
+    up home and `/tmp` (what PythonAnywhere's quota counts) at most every 10 minutes, and
+    fails past 80% of the quota.
+
 ## Deployment
 
 The live site runs on [PythonAnywhere](https://www.pythonanywhere.com/). Two pieces run
@@ -119,6 +129,12 @@ Notes for anyone reproducing this setup:
     through Flask.
 *   The database is a single SQLite file alongside the code. `VACUUM INTO` (never `cp`)
     is the safe way to snapshot it while the tracker is writing.
+*   Point an external uptime monitor at `/api/health` and alert on any non-200. It
+    catches a stopped tracker, a database the tracker can't write, and the site being
+    down. The monitor has to be external, so it still fires when the host is the
+    thing that broke.
+*   Set `DISK_QUOTA_MB` in the WSGI file, above the line that imports `app`, so the
+    health check also warns before the disk fills.
 *   Nothing about the application is host-specific; any WSGI host plus a scheduled
     process for the tracker will work.
 
