@@ -222,6 +222,14 @@ class HistoryImportedEraTest(ApiTestCase):
         _, body = self.get('/api/history?start=2025-12-01T00:00:00Z&end=2026-01-06T00:00:00Z')
         self.assertEqual([r['count'] for r in body], [900, 950] + PLAYER_COUNTS)
 
+    def test_imported_rows_are_bare_dates_in_week_view_like_native_rows(self):
+        _, body = self.get('/api/history?unit=week&start=2025-12-01T00:00:00Z&end=2026-01-06T00:00:00Z')
+        self.assertEqual([r['timestamp'] for r in body], ['2025-12-15', '2025-12-22', '2026-01-05'])
+
+    def test_imported_rows_keep_full_timestamps_in_hour_view(self):
+        _, body = self.get('/api/history?unit=hour&start=2025-12-01T00:00:00Z&end=2025-12-31T00:00:00Z')
+        self.assertEqual([r['timestamp'] for r in body], ['2025-12-15T00:00:00Z', '2025-12-22T00:00:00Z'])
+
     def test_agg_avg_selects_the_avg_statistic(self):
         _, body = self.get('/api/history?agg=avg&start=2025-12-01T00:00:00Z&end=2026-01-06T00:00:00Z')
         self.assertEqual([r['count'] for r in body][:2], [800, 850])

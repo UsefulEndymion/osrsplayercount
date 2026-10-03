@@ -169,6 +169,11 @@ def iso_z(dt):
     return dt.astimezone(timezone.utc).strftime(ISO_Z)
 
 
+# Units bucketed into bare "YYYY-MM-DD" calendar dates rather than instants. The
+# frontend plots these at the viewer's local midnight.
+DATE_UNITS = ('day', 'week', 'month')
+
+
 def _bucket_exprs(unit, step, col):
     """(select, group by) expressions bucketing `col` by unit. None if unit is unset
     or unrecognised, in which case the caller should return raw rows."""
@@ -240,7 +245,9 @@ def _imported_history(conn, start_dt, end_dt, unit, agg):
         # rows are already one per week, so this is a passthrough rather than a
         # re-bucketing. Re-bucketing would be wrong anyway -- the site's weeks start
         # on varying weekdays, so snapping them to Mondays would collide pairs.
-        query = (f"SELECT period_start as timestamp, count "
+        # Day and week views get bare dates to match the native buckets beside them.
+        ts = "date(period_start)" if unit in DATE_UNITS else "period_start"
+        query = (f"SELECT {ts} as timestamp, count "
                  f"FROM history_import {where_str} ORDER BY period_start ASC")
 
     return [{'timestamp': r['timestamp'], 'count': r['count']}
