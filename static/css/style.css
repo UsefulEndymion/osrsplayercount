@@ -144,7 +144,7 @@ label[style*="color:#bdbdbd"] {
     text-shadow: 1px 1px 0 #000;
 }
 /* Also update the spinner and about text */
-#loadingSpinner, #about-app, #about-app div {
+#loadingSpinner, #about-app, #about-app div, #outages-app, #outages-app div {
     color: #d4d4d4 !important;
     text-shadow: 1px 1px 0 #000;
 }

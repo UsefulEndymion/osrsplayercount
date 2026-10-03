@@ -5,16 +5,21 @@ const API_BASE = '';
 // the world people know is that plus 300.
 const WORLD_OFFSET = 300;
 
-// Collapsible About section
-document.addEventListener('DOMContentLoaded', function() {
-    const toggleBtn = document.getElementById('about-toggle');
-    const aboutContent = document.getElementById('about-content');
+// Collapsible About and Outages sections
+function wireToggle(buttonId, contentId, showLabel, hideLabel) {
+    const toggleBtn = document.getElementById(buttonId);
+    const content = document.getElementById(contentId);
     let collapsed = true;
     toggleBtn.addEventListener('click', function() {
         collapsed = !collapsed;
-        aboutContent.style.display = collapsed ? 'none' : 'block';
-        toggleBtn.textContent = collapsed ? 'More about this site' : 'Less about this site';
+        content.style.display = collapsed ? 'none' : 'block';
+        toggleBtn.textContent = collapsed ? showLabel : hideLabel;
     });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    wireToggle('about-toggle', 'about-content', 'More about this site', 'Less about this site');
+    wireToggle('outages-toggle', 'outages-content', 'Data outages', 'Hide data outages');
 });
 
 // Globals
@@ -450,6 +455,41 @@ function markRangeCustom() {
     if (presetEl) presetEl.value = 'custom';
 }
 
+// A step between points this many times longer than the steps either side of it
+// is an outage, and is left blank instead of drawn. Relative rather than a fixed
+// duration because normal spacing runs from 5 minutes (global samples) to a week
+// (imported history), and depends on the granularity too.
+const GAP_FACTOR = 3;
+
+// Indexes i where the step from point i-1 to point i spans an outage.
+function findGaps(points) {
+    const gaps = new Set();
+    const step = i => points[i].x - points[i - 1].x;
+    for (let i = 1; i < points.length; i++) {
+        const neighbours = [];
+        if (i >= 2) neighbours.push(step(i - 1));
+        if (i + 1 < points.length) neighbours.push(step(i + 1));
+        if (neighbours.length && step(i) > GAP_FACTOR * Math.max(...neighbours)) {
+            gaps.add(i);
+        }
+    }
+    return gaps;
+}
+
+// Gaps are hidden per segment rather than by inserting null points, so every
+// point keeps its index for the index-mode tooltip.
+function lineStyle(points) {
+    const gaps = findGaps(points);
+    const last = points.length - 1;
+    const hideGap = ctx => (gaps.has(ctx.p1DataIndex) ? 'transparent' : undefined);
+    // A point with no line on either side would be invisible without a marker.
+    const isolated = i => (i === 0 || gaps.has(i)) && (i === last || gaps.has(i + 1));
+    return {
+        pointRadius: ctx => (isolated(ctx.dataIndex) ? 3 : 0),
+        segment: { borderColor: hideGap, backgroundColor: hideGap }
+    };
+}
+
 function buildChart(datasets, granularityInfo) {
     const ctx = document.getElementById('populationChart').getContext('2d');
     const viewerTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local';
@@ -491,7 +531,7 @@ function buildChart(datasets, granularityInfo) {
                 borderColor: ds.borderColor,
                 backgroundColor: ds.backgroundColor || 'rgba(0,0,0,0)',
                 borderWidth: 2,
-                pointRadius: 0,
+                ...lineStyle(ds.data),
                 fill: !!ds.backgroundColor, // Only fill if background color provided
                 tension: 0.25
             }))

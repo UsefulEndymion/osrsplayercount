@@ -230,6 +230,14 @@
                     <div style="margin-top:8px; color: #ff981f;"><strong>Note:</strong> Detailed world data (including specific world counts, F2P vs Members splits, and regional data) only started being collected on Dec 4, 2025. Any data prior to this date only contains the global player count.</div>
                 </div>
             </div>
+            <div id="outages-app" style="margin-top:12px; text-align:left; color:#bdbdbd; font-size:0.95em;">
+                <button id="outages-toggle" style="background:#232323; color:#ff9800; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:1em;">Data outages</button>
+                <div id="outages-content" style="display:none; margin-top:10px;">
+                    <h3 style="color: #ff981f; font-size: 1.1em; margin-bottom: 8px;">Data outages</h3>
+                    <div style="margin-top:6px;">Periods when the tracker was not recording. Nothing was collected during these gaps, and they are not filled in. Times are UTC.</div>
+                    <div style="margin-top:8px;"><strong>Sep 15 &ndash; Oct 3, 2026:</strong> A storage problem on the server damaged the database. World-level data (individual worlds, regions, F2P vs Members and activities) stopped on Sep 15 at 10:23. The global player count kept recording, missing one sample every 30 minutes, until Sep 26 at 07:57, then stopped as well. Both resumed on Oct 3. The database was repaired and nothing collected before the outage was lost.</div>
+                </div>
+            </div>
         </div>
     </div>
 
