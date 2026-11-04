@@ -70,6 +70,14 @@ class GroupActivitiesTest(unittest.TestCase):
         ])
         self.assertEqual(entries, [{'name': 'Leagues VI', 'ids': [83, 92, 93, 96]}])
 
+    def test_hardcore_worlds_group_apart_from_the_activities_they_host(self):
+        entries = group_activities([
+            (104, 'Hardcore World'), (103, 'Hardcore World - Group PvM'),
+            (105, 'Hardcore World - Wintertodt'), (25, 'Wintertodt'),
+        ])
+        self.assertEqual(names(entries), ['Hardcore World', 'Wintertodt'])
+        self.assertEqual(ids_for(entries, 'Hardcore World'), [103, 104, 105])
+
     def test_no_separator_still_groups(self):
         entries = group_activities([(28, 'Brimhaven Agility'),
                                     (45, 'Brimhaven Agility Arena')])
