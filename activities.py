@@ -19,6 +19,7 @@ ACTIVITY_GROUP_PREFIXES = (
     'Castle Wars',
     'Deadman',
     'Deadman Finale',
+    'Hardcore World',
     'LMS',
     'Leagues VI',
     'PvP Arena',
