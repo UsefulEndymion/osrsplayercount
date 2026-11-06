@@ -423,7 +423,7 @@ def _world_history(conn, q):
         params.append(q.world_id)
     else:
         select_clause = "SELECT se.timestamp as timestamp, SUM(wd.player_count) as count"
-        group_by = "GROUP BY se.id"
+        group_by = "GROUP BY wd.scrape_id"
 
     detail_clauses, detail_params = _world_detail_clauses(q)
     where_clauses += detail_clauses
