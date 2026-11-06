@@ -959,6 +959,7 @@ function showShareNotice(ignored) {
 // Update chart using inputs (gracefully handle 400 responses from server)
 async function updateFromInputs() {
     syncUrl();
+    chartFetchedAt = Date.now();
 
     const gran = document.getElementById('granularitySelect').value;
     const agg = document.getElementById('aggregationSelect').value;
@@ -1131,6 +1132,25 @@ function applyPreset(v) {
     updateFromInputs();
 }
 
+const REFRESH_TICK_MS = 2 * 60 * 1000;
+const REFRESH_DUE_SLACK_MS = REFRESH_TICK_MS / 2;
+const CHART_REFRESH_MINUTES = { '3h': 2, '6h': 2, '12h': 2, '24h': 2, '7d': 10, '30d': 30 };
+const LONG_RANGE_REFRESH_MINUTES = 60;
+let chartFetchedAt = 0;
+
+// A preset means "last N from now", so it is re-applied to stay live. Longer
+// ranges barely change between ticks, and a hidden tab polls for no one.
+async function refreshLive() {
+    if (document.hidden) return;
+    await fetchLatest();
+    const preset = document.getElementById('presetSelect');
+    if (!preset || preset.value === 'custom') return;
+    const minutes = CHART_REFRESH_MINUTES[preset.value] || LONG_RANGE_REFRESH_MINUTES;
+    if (Date.now() - chartFetchedAt >= minutes * 60 * 1000 - REFRESH_DUE_SLACK_MS) {
+        applyPreset(preset.value);
+    }
+}
+
 // Initialize page: set default inputs and render
 async function initializePage() {
     // Default to last 7d with hour granularity
@@ -1219,14 +1239,8 @@ async function initializePage() {
 
     await Promise.all([metadata, fetchLatest(), updateFromInputs()]);
 
-    // Auto-refresh every 2 minutes
-    setInterval(async () => {
-        await fetchLatest();
-        // If we are on a preset (not custom), refresh the chart range to keep it "live"
-        if (presetEl && presetEl.value !== 'custom') {
-            applyPreset(presetEl.value);
-        }
-    }, 2 * 60 * 1000);
+    setInterval(refreshLive, REFRESH_TICK_MS);
+    document.addEventListener('visibilitychange', refreshLive);
 }
 
 // Run initialize on page load
