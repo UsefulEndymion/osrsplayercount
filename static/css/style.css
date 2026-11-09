@@ -51,6 +51,7 @@ h1 {
     text-shadow: 2px 2px 0 #000;
 }
 .timestamp { color: #d4d4d4; font-size: 0.9em; text-shadow: 1px 1px 0 #000; }
+.timestamp.stale { color: #ff5252; }
 canvas { 
     max-height: 50vh; 
     width: 100% !important;
