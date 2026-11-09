@@ -343,6 +343,10 @@ function customNotice(results, startISO) {
     return filteredRangeNotice(startISO);
 }
 
+// Three missed 5-minute samples: the tracker is down or Jagex has stopped
+// publishing a count, usually because the game is offline.
+const STALE_AFTER_MS = 15 * 60 * 1000;
+
 // Fetch latest player count
 async function fetchLatest() {
     try {
@@ -372,13 +376,15 @@ async function fetchLatest() {
 
         // Parse the timestamp returned by the API (UTC ISO 8601) and
         // display it in the viewer's local timezone.
+        const lastUpdated = document.getElementById('last-updated');
         try {
             const lastDate = new Date(data.timestamp);
             const lastUpdatedStr = lastDate.toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' });
-            document.getElementById('last-updated').innerText = `Last updated: ${lastUpdatedStr}`;
+            lastUpdated.innerText = `Last updated: ${lastUpdatedStr}`;
         } catch (e) {
-            document.getElementById('last-updated').innerText = `Last updated: ${data.timestamp}`;
+            lastUpdated.innerText = `Last updated: ${data.timestamp}`;
         }
+        lastUpdated.classList.toggle('stale', Date.now() - new Date(data.timestamp) > STALE_AFTER_MS);
     } catch (error) {
         console.error('Error fetching latest:', error);
         document.getElementById('player-count').innerText = "Offline";
